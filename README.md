@@ -1,6 +1,6 @@
 # 🚀 ESP32 Cheap Yellow Display (CYD) – Smart TFT IoT Interface
 
-![ESP32 CYD](https://randomnerdtutorials.com/wp-content/uploads/2023/09/ESP32-Cheap-Yellow-Display-Board-CYD-ESP32-2432S028R.jpg)
+![ESP32 CYD](https://raw.githubusercontent.com/ggveens/esp32-cyd/23000b4b5526967568f51b23c35c5be6606036c1/public/imgage/233870a0-50fa-4519-9d58-e3c04f9747fa.jpeg)
 
 > A powerful all-in-one ESP32 development board with integrated touchscreen display – designed for building modern IoT interfaces.
 
