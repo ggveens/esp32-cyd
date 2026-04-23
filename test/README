@@ -1,0 +1,1369 @@
+
+This directory is intended for PlatformIO Test Runner and project tests.
+
+Unit Testing is a software testing method by which individual units of
+source code, sets of one or more MCU program modules together with associated
+control data, usage procedures, and operating procedures, are tested to
+determine whether they are fit for use. Unit testing finds problems early
+in the development cycle.
+
+More information about PlatformIO Unit Testing:
+- https://docs.platformio.org/en/latest/advanced/unit-testing/index.html
+
+    src/
+    ├── main.cpp
+    ├── config.h
+
+    ├── core/
+    │    ├── globals.h
+    │    └── globals.cpp
+
+    ├── wifi/
+    │    ├── wifi_manager.h
+    │    └── wifi_manager.cpp
+
+    ├── mqtt/
+    │    ├── mqtt_manager.h
+    │    └── mqtt_manager.cpp
+
+    ├── ui/
+    │    ├── ui.h
+    │    └── ui.cpp
+
+    ├── relay/
+    │    ├── relay.h
+    │    └── relay.cpp
+
+    ├── schedule/
+    │    ├── schedule.h
+    │    └── schedule.cpp
+
+    ├── server/
+    │    ├── web_server.h
+    │    └── web_server.cpp
+
+
+ đây là code cũ hoạt động tốt ổn định main.cpp : #include <Arduino.h>
+#include <SD.h>
+#include <FS.h>
+#include <WiFi.h>
+#include <WebServer.h>
+#include <DNSServer.h>
+#include <PubSubClient.h>
+#include <TFT_eSPI.h>
+#include <XPT2046_Touchscreen.h>
+#include <SPI.h>
+#include "time.h"
+#include <Preferences.h>
+#include "config.h"
+// ===== TFT =====
+TFT_eSPI tft = TFT_eSPI();
+
+// ===== TOUCH =====
+#define TOUCH_CS 33
+XPT2046_Touchscreen ts(TOUCH_CS);
+
+// ===== TOUCH CALIBRATION =====
+
+// ===== WIFI =====
+Preferences prefs;
+#define MAX_WIFI 5
+String ssids[MAX_WIFI];
+String passes[MAX_WIFI];
+
+// ===== MODE FLAGS =====
+bool isAPMode = false;
+
+// ===== AUTH =====
+const char* adminUser = "admin";
+const char* adminPass = "0345030913";
+
+// ===== RESET BUTTON =====
+#define BTN_RESET 0
+
+// ===== MQTT =====
+const char* mqtt_server = "broker.hivemq.com";
+WiFiClient espClient;
+PubSubClient client(espClient);
+
+// ===== DEVICE =====
+String deviceId;
+WebServer server(80);
+
+// ===== TIME =====
+const char* ntpServer = "pool.ntp.org";
+const long gmtOffset_sec = 7 * 3600;
+
+// ===== RELAY =====
+#define RELAY1 27
+#define RELAY2 22
+#define RELAY3 21
+
+// ===== RGB LED =====
+#define LED_R 4
+#define LED_G 16
+#define LED_B 17
+
+// ===== PWM CHANNEL =====
+#define CH_R 0
+#define CH_G 1
+#define CH_B 2
+
+// ===== PWM CONFIG =====
+#define PWM_FREQ 5000
+#define PWM_RES  8
+
+bool state1 = false;
+bool state2 = false;
+bool state3 = false;
+
+// ================= TIMER SCHEDULE =================
+
+#define MAX_SCHEDULE 10
+
+struct Schedule {
+  bool active;
+  int relay;
+
+  int onH;
+  int onM;
+
+  int offH;
+  int offM;
+
+  bool firedOn;
+  bool firedOff;
+};
+
+Schedule schedules[MAX_SCHEDULE];
+
+// ================= DEVICE ID =================
+String getDeviceID() {
+  uint64_t chipid = ESP.getEfuseMac();
+  char id[20];
+  sprintf(id, "device_%04X", (uint16_t)(chipid & 0xFFFF));
+  return String(id);
+}
+
+// ================= WIFI =================
+void loadWiFi() {
+  prefs.begin("wifi", true);
+  for (int i = 0; i < MAX_WIFI; i++) {
+    ssids[i] = prefs.getString(("s" + String(i)).c_str(), "");
+    passes[i] = prefs.getString(("p" + String(i)).c_str(), "");
+  }
+  prefs.end();
+}
+
+void saveWiFi(String s, String p) {
+  prefs.begin("wifi", false);
+
+  for (int i = MAX_WIFI - 1; i > 0; i--) {
+    prefs.putString(("s" + String(i)).c_str(), ssids[i - 1]);
+    prefs.putString(("p" + String(i)).c_str(), passes[i - 1]);
+  }
+
+  prefs.putString("s0", s);
+  prefs.putString("p0", p);
+  prefs.end();
+}
+
+bool connectWiFi() {
+  for (int i = 0; i < MAX_WIFI; i++) {
+    if (ssids[i] == "") continue;
+
+    WiFi.begin(ssids[i].c_str(), passes[i].c_str());
+    unsigned long start = millis();
+
+    while (WiFi.status() != WL_CONNECTED) {
+      delay(300);
+      if (millis() - start > 8000) break;
+    }
+
+    if (WiFi.status() == WL_CONNECTED) {
+      Serial.println("Connected: " + ssids[i]);
+      return true;
+    }
+  }
+  return false;
+}
+
+// ================= UI =================
+int getWiFiPercent() {
+  int rssi = WiFi.RSSI();
+  if (rssi <= -100) return 0;
+  if (rssi >= -50) return 100;
+  return 2 * (rssi + 100);
+}
+
+void drawCard(int x,int y,int w,int h,uint16_t c){ tft.fillRoundRect(x,y,w,h,8,c); }
+
+// ===== START UI DARK MODE =====
+
+// 🎨 Palette dịu mắt
+#define BG_COLOR       0x0841   // xám rất đậm (gần đen nhưng dịu)
+#define CARD_COLOR     0x1082
+#define BORDER_COLOR   0x2104
+#define TEXT_PRIMARY   0xFFFF
+#define TEXT_SECONDARY 0x7BEF
+#define ACCENT_COLOR   0x2D7F   // xanh dịu hơn
+#define TIME_COLOR     0xFD20   // vàng nhẹ
+
+// ===== HEADER =====
+void drawHeader() {
+
+  tft.fillRect(0, 0, 320, 40, BG_COLOR);
+  tft.drawFastHLine(0, 39, 320, BORDER_COLOR);
+
+  tft.setTextSize(1);
+
+  // ===== DÒNG 1: ID (TRÁI) =====
+  tft.setTextColor(ACCENT_COLOR, BG_COLOR);
+  tft.setCursor(5, 5);
+  tft.print("ID:");
+
+  tft.setTextColor(TEXT_PRIMARY, BG_COLOR);
+  tft.print(deviceId.substring(0, 10));
+
+  // ===== DÒNG 1: AP (PHẢI) =====
+  String apStr = "AP:" + WiFi.softAPIP().toString();
+  int16_t apX = 320 - tft.textWidth(apStr) - 5;
+
+  tft.setCursor(apX, 5);
+  tft.setTextColor(TEXT_SECONDARY, BG_COLOR);
+  tft.print("AP:");
+
+  tft.setTextColor(TEXT_PRIMARY, BG_COLOR);
+  tft.print(WiFi.softAPIP());
+
+  // ===== DÒNG 2: WIFI NAME (TRÁI) =====
+  String wifiName = WiFi.status() == WL_CONNECTED ? WiFi.SSID() : "No WiFi";
+
+  // nếu tên dài thì cắt
+  if (wifiName.length() > 16) {
+    wifiName = wifiName.substring(0, 16);
+  }
+
+  tft.setCursor(5, 22);
+  tft.setTextColor(ACCENT_COLOR, BG_COLOR);
+  tft.print(wifiName);
+
+  // ===== DÒNG 2: IP (PHẢI) =====
+  String ipStr = "IP:" + WiFi.localIP().toString();
+  int16_t ipX = 320 - tft.textWidth(ipStr) - 5;
+
+  tft.setCursor(ipX, 22);
+  tft.setTextColor(TEXT_SECONDARY, BG_COLOR);
+  tft.print("IP:");
+
+  tft.setTextColor(TEXT_PRIMARY, BG_COLOR);
+  tft.print(WiFi.localIP());
+}
+
+// ===== TIME =====
+void drawTime() {
+
+  static int lastSec = -1;
+
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo)) return;
+
+  // 👉 chỉ update khi giây thay đổi
+  if (timeinfo.tm_sec == lastSec) return;
+  lastSec = timeinfo.tm_sec;
+
+  char timeStr[9];
+  char dateStr[12];
+
+  strftime(timeStr, sizeof(timeStr), "%H:%M:%S", &timeinfo);
+  strftime(dateStr, sizeof(dateStr), "%d/%m/%Y", &timeinfo);
+
+  // ===== TIME =====
+  tft.setTextSize(3);
+
+  int16_t timeX = (320 - tft.textWidth(timeStr)) / 2;
+
+  // 👉 overwrite text (KHÔNG clear)
+  tft.setTextColor(TIME_COLOR, BG_COLOR);
+  tft.setCursor(timeX, 55);
+  tft.print(timeStr);
+
+  // ===== DATE (chỉ vẽ 1 lần / khi đổi ngày) =====
+  static int lastDay = -1;
+
+  if (timeinfo.tm_mday != lastDay) {
+    lastDay = timeinfo.tm_mday;
+
+    tft.setTextSize(1);
+
+    int16_t dateX = (320 - tft.textWidth(dateStr)) / 2;
+
+    // clear nhỏ gọn thôi (không clear cả vùng lớn)
+    tft.fillRect(0, 80, 320, 20, BG_COLOR);
+
+    tft.setTextColor(TEXT_SECONDARY, BG_COLOR);
+    tft.setCursor(dateX, 85);
+    tft.print(dateStr);
+  }
+}
+
+// ===== RELAY CARD =====
+void drawRelayCompact(int y, const char* name, const char* pin, bool state) {
+
+  int x = 10;
+  int w = 300;
+  int h = 38;
+
+  uint16_t border = state ? 0x07E0 : 0xF800; // xanh / đỏ dịu
+
+  // nền card
+  tft.fillRoundRect(x, y, w, h, 6, CARD_COLOR);
+  tft.drawRoundRect(x, y, w, h, 6, border);
+
+  // LED
+  tft.fillCircle(x + 15, y + h/2, 5, border);
+
+  // Name
+  tft.setTextColor(TEXT_PRIMARY, CARD_COLOR);
+  tft.setTextSize(1);
+  tft.setCursor(x + 28, y + 10);
+  tft.print(name);
+
+  // GPIO
+  tft.setTextColor(TEXT_SECONDARY, CARD_COLOR);
+  tft.setCursor(x + 28, y + 24);
+  tft.print(pin);
+
+  // trạng thái
+// ===== STATUS BUTTON STYLE =====
+uint16_t btnColor  = state ? 0x07E0 : 0xF800;   // nền
+uint16_t textColor = state ? TFT_BLACK : TFT_WHITE; // chữ
+
+// vẽ nền
+tft.fillRoundRect(x + w - 50, y + 8, 40, 22, 4, btnColor);
+
+// ⚠️ KHÔNG set background nữa → để transparent
+tft.setTextColor(textColor);
+
+// canh giữa chữ đẹp hơn
+String label = state ? "ON" : "OFF";
+int16_t tx = x + w - 50 + (40 - tft.textWidth(label)) / 2;
+int16_t ty = y + 8 + (22 / 2) - 4;
+
+tft.setCursor(tx, ty);
+tft.print(label);
+
+}
+
+// ===== RELAYS =====
+void drawRelays() {
+  drawRelayCompact(100, "DISPLAY33", "GPIO27", state1);
+  drawRelayCompact(145, "RELAY 2", "GPIO22", state2);
+  drawRelayCompact(190, "RELAY 3", "GPIO21", state3);
+}
+
+// ===== FOOTER =====
+void drawFooter() {
+
+  tft.fillRect(0, 240, 320, 40, BG_COLOR);
+  tft.drawFastHLine(0, 240, 320, BORDER_COLOR);
+
+  // MQTT
+  tft.setTextColor(TEXT_SECONDARY, BG_COLOR);
+  tft.setCursor(10, 250);
+  tft.print("MQTT:");
+
+  tft.setTextColor(client.connected() ? 0x07E0 : 0xF800, BG_COLOR);
+  tft.print(client.connected() ? " ON" : " OFF");
+
+  // RSSI
+  tft.setCursor(150, 250);
+  tft.setTextColor(TEXT_SECONDARY, BG_COLOR);
+  tft.print("RSSI:");
+
+  tft.setTextColor(TEXT_PRIMARY, BG_COLOR);
+  tft.print(WiFi.RSSI());
+
+  // uptime
+  tft.setCursor(10, 265);
+  tft.setTextColor(TEXT_SECONDARY, BG_COLOR);
+  tft.print("UP:");
+
+  unsigned long up = millis()/1000;
+  tft.setTextColor(TEXT_PRIMARY, BG_COLOR);
+  tft.print(up/3600);
+  tft.print("h");
+}
+
+// ===== MAIN UI =====
+void drawUI() {
+  tft.fillScreen(BG_COLOR);
+  drawHeader();
+  drawTime();
+  drawRelays();
+  drawFooter();
+}
+
+// ===== END UI DARK MODE =====
+
+// ================= RELAY =================
+
+void relay1_on(){ state1=true; digitalWrite(RELAY1,HIGH); drawRelays(); server.send(200,"text/plain","OK"); }
+void relay1_off(){ state1=false; digitalWrite(RELAY1,LOW); drawRelays(); server.send(200,"text/plain","OK"); }
+void relay2_on(){ state2=true; digitalWrite(RELAY2,LOW); drawRelays(); server.send(200,"text/plain","OK"); }
+void relay2_off(){ state2=false; digitalWrite(RELAY2,HIGH); drawRelays(); server.send(200,"text/plain","OK"); }
+void relay3_on(){ state3=true; digitalWrite(RELAY3,LOW); drawRelays(); server.send(200,"text/plain","OK"); }
+void relay3_off(){ state3=false; digitalWrite(RELAY3,HIGH); drawRelays(); server.send(200,"text/plain","OK"); }
+
+// ================= TIMER RESET DAILY =================
+void resetScheduleDaily() {
+  static int lastDay = -1;
+
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo)) return;
+
+  if (timeinfo.tm_mday != lastDay) {
+    lastDay = timeinfo.tm_mday;
+
+    for (int i = 0; i < MAX_SCHEDULE; i++) {
+      schedules[i].firedOn = false;
+      schedules[i].firedOff = false;
+    }
+  }
+}
+
+// ================= TIMER ENGINE =================
+void handleSchedule() {
+
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo)) return;
+
+  int h = timeinfo.tm_hour;
+  int m = timeinfo.tm_min;
+
+  for (int i = 0; i < MAX_SCHEDULE; i++) {
+
+    if (!schedules[i].active) continue;
+
+    // ON
+    if (!schedules[i].firedOn &&
+        h == schedules[i].onH &&
+        m == schedules[i].onM) {
+
+      schedules[i].firedOn = true;
+
+      if (schedules[i].relay == 1) relay1_on();
+      if (schedules[i].relay == 2) relay2_on();
+      if (schedules[i].relay == 3) relay3_on();
+    }
+
+    // OFF
+    if (!schedules[i].firedOff &&
+        h == schedules[i].offH &&
+        m == schedules[i].offM) {
+
+      schedules[i].firedOff = true;
+
+      if (schedules[i].relay == 1) relay1_off();
+      if (schedules[i].relay == 2) relay2_off();
+      if (schedules[i].relay == 3) relay3_off();
+    }
+  }
+}
+
+// ================= MQTT =================
+void sendStatusMQTT(){
+  String json = "{";
+  json += "\"relay1\":" + String(state1?"true":"false") + ",";
+  json += "\"relay2\":" + String(state2?"true":"false") + ",";
+  json += "\"relay3\":" + String(state3?"true":"false");
+  json += "}";
+
+  client.publish(("home/"+deviceId+"/status").c_str(), json.c_str(), true);
+}
+
+void callback(char* topic, byte* payload, unsigned int length){
+  String msg;
+  for(int i=0;i<length;i++) msg+=(char)payload[i];
+
+  if(msg=="relay1_on") relay1_on();
+  if(msg=="relay1_off") relay1_off();
+  if(msg=="relay2_on") relay2_on();
+  if(msg=="relay2_off") relay2_off();
+  if(msg=="relay3_on") relay3_on();
+  if(msg=="relay3_off") relay3_off();
+}
+
+void reconnectMQTT(){
+  while(!client.connected()){
+    if(client.connect(deviceId.c_str())){
+      client.subscribe(("home/"+deviceId+"/relay").c_str());
+    } else delay(2000);
+  }
+}
+
+// ================= SERVER =================
+
+// ===== SCAN WIFI =====
+void handleScanWiFi() {
+
+  int n = WiFi.scanNetworks();
+  String json = "[";
+
+  for (int i = 0; i < n; i++) {
+    if (i) json += ",";
+    json += "{";
+    json += "\"ssid\":\"" + WiFi.SSID(i) + "\",";
+    json += "\"rssi\":" + String(WiFi.RSSI(i));
+    json += "}";
+  }
+
+  json += "]";
+
+  server.send(200, "application/json", json);
+}
+
+// ===== LIST WIFI SAVED =====
+void handleListSavedWiFi() {
+
+  String json = "[";
+
+  for (int i = 0; i < MAX_WIFI; i++) {
+    if (ssids[i] == "") continue;
+
+    if (json != "[") json += ",";
+    json += "{";
+    json += "\"ssid\":\"" + ssids[i] + "\"";
+    json += "}";
+  }
+
+  json += "]";
+
+  server.send(200, "application/json", json);
+}
+
+// ===== SET WIFI (FIX LỖI NẰM Ở ĐÂY) =====
+void handleSetWiFi() {
+
+  if (!server.hasArg("ssid") || !server.hasArg("pass")) {
+    server.send(400, "application/json", "{\"error\":\"missing ssid/pass\"}");
+    return;
+  }
+
+  String newSSID = server.arg("ssid");
+  String newPASS = server.arg("pass");
+
+  Serial.println("SET WIFI:");
+  Serial.println(newSSID);
+
+  // lưu vào flash
+  saveWiFi(newSSID, newPASS);
+
+  server.send(200, "application/json", "{\"status\":\"saved, restarting\"}");
+
+  delay(1000);
+  ESP.restart();
+}
+
+// ===== RESET DEVICE =====
+void handleResetDevice() {
+  server.send(200, "text/plain", "Restarting...");
+  delay(1000);
+  ESP.restart();
+}
+
+// ===== SERVER SETUP WEBSITE =====
+void setupServer(){
+
+  server.on("/", []() {
+    if (!server.authenticate(adminUser, adminPass)) {
+      return server.requestAuthentication();
+    }
+
+    String html = R"rawliteral(
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+body{
+  font-family:Arial;
+  background:#0f172a;
+  color:white;
+  text-align:center;
+}
+.card{
+  background:#1e293b;
+  margin:10px;
+  padding:15px;
+  border-radius:12px;
+}
+button{
+  width:100px;
+  height:40px;
+  margin:5px;
+  border:none;
+  border-radius:8px;
+  font-size:16px;
+}
+.on{background:#22c55e;color:white;}
+.off{background:#ef4444;color:white;}
+</style>
+</head>
+
+<body>
+
+<h2>ESP32 CONTROL</h2>
+<p>)rawliteral" + deviceId + R"rawliteral(</p>
+
+<div class="card">
+<h3>LCD (GPIO27)</h3>
+<button class="on" onclick="send('/relay/1/on')">ON</button>
+<button class="off" onclick="send('/relay/1/off')">OFF</button>
+</div>
+
+<div class="card">
+<h3>GPIO22</h3>
+<button class="on" onclick="send('/relay/2/on')">ON</button>
+<button class="off" onclick="send('/relay/2/off')">OFF</button>
+</div>
+
+<div class="card">
+<h3>GPIO21</h3>
+<button class="on" onclick="send('/relay/3/on')">ON</button>
+<button class="off" onclick="send('/relay/3/off')">OFF</button>
+</div>
+
+<div class="card">
+<h3>Hẹn giờ Relay</h3>
+
+<select id="relay">
+  <option value="1">Relay 1</option>
+  <option value="2">Relay 2</option>
+  <option value="3">Relay 3</option>
+</select>
+
+<br><br>
+
+<input id="on" placeholder="ON HH:MM">
+<input id="off" placeholder="OFF HH:MM">
+
+<br><br>
+
+<button class="on" onclick="add()">ADD</button>
+
+<div id="list"></div>
+</div>
+
+<script>
+function add(){
+  let r = document.getElementById("relay").value;
+  let on = document.getElementById("on").value;
+  let off = document.getElementById("off").value;
+
+  fetch(`/api/schedule/add?relay=${r}&on=${on}&off=${off}`)
+  .then(r=>r.text())
+  .then(()=>load());
+}
+
+function load(){
+  fetch('/api/schedule/list')
+  .then(r=>r.json())
+  .then(d=>{
+    let h="";
+    d.forEach((s,i)=>{
+      h+=`<div>
+      R${s.relay} ${s.on}→${s.off}
+      <button onclick="del(${i})">X</button>
+      </div>`;
+    });
+    document.getElementById("list").innerHTML=h;
+  });
+}
+
+function del(i){
+  fetch('/api/schedule/delete?id='+i).then(()=>load());
+}
+
+load();
+</script>
+<!-- WIFI UI -->
+<div class="card">
+<h3>WiFi Setup</h3>
+
+<button onclick="scanWifi()">Scan WiFi</button>
+
+<div id="wifiList"></div>
+
+<br>
+<input id="ssid" placeholder="SSID"><br><br>
+<input id="pass" placeholder="Password" type="password"><br><br>
+
+<button class="on" onclick="saveWifi()">SAVE</button>
+</div>
+
+<script>
+function send(url){
+  fetch(url)
+  .then(r=>r.text())
+  .then(d=>console.log(d));
+}
+
+function scanWifi(){
+  fetch('/api/wifi/scan')
+  .then(r=>r.json())
+  .then(data=>{
+    let html = "";
+    data.forEach(w=>{
+      html += `<div onclick="selectWifi('${w.ssid}')">
+        ${w.ssid} (${w.rssi})
+      </div>`;
+    });
+    document.getElementById("wifiList").innerHTML = html;
+  });
+}
+
+function selectWifi(s){
+  document.getElementById("ssid").value = s;
+}
+
+function saveWifi(){
+  let ssid = document.getElementById("ssid").value;
+  let pass = document.getElementById("pass").value;
+
+  fetch(`/api/wifi/set?ssid=${ssid}&pass=${pass}`)
+  .then(r=>r.text())
+  .then(d=>{
+    alert("Saved! Device restarting...");
+  });
+}
+</script>
+
+</body>
+</html>
+)rawliteral";
+
+    server.send(200, "text/html", html);
+  });
+
+  // ===== RELAY =====
+  server.on("/relay/1/on", relay1_on);
+  server.on("/relay/1/off", relay1_off);
+  server.on("/relay/2/on", relay2_on);
+  server.on("/relay/2/off", relay2_off);
+  server.on("/relay/3/on", relay3_on);
+  server.on("/relay/3/off", relay3_off);
+
+  // ===== WIFI API =====
+  server.on("/api/wifi/scan", handleScanWiFi);
+  server.on("/api/wifi/list", handleListSavedWiFi);
+  server.on("/api/wifi/set", handleSetWiFi);
+  server.on("/api/reset", handleResetDevice);
+
+  server.on("/api/schedule/add", []() {
+
+  if (!server.hasArg("relay") || !server.hasArg("on") || !server.hasArg("off")) {
+    server.send(400, "text/plain", "missing");
+    return;
+  }
+
+  int relay = server.arg("relay").toInt();
+
+  String onT = server.arg("on");
+  String offT = server.arg("off");
+
+  int onH = onT.substring(0,2).toInt();
+  int onM = onT.substring(3,5).toInt();
+
+  int offH = offT.substring(0,2).toInt();
+  int offM = offT.substring(3,5).toInt();
+
+  for (int i = 0; i < MAX_SCHEDULE; i++) {
+
+    if (!schedules[i].active) {
+
+      schedules[i].active = true;
+      schedules[i].relay = relay;
+
+      schedules[i].onH = onH;
+      schedules[i].onM = onM;
+
+      schedules[i].offH = offH;
+      schedules[i].offM = offM;
+
+      schedules[i].firedOn = false;
+      schedules[i].firedOff = false;
+
+      server.send(200, "text/plain", "OK");
+      return;
+    }
+  }
+
+  server.send(500, "text/plain", "FULL");
+});
+
+server.on("/api/schedule/list", []() {
+
+  String json = "[";
+
+  for (int i = 0; i < MAX_SCHEDULE; i++) {
+    if (!schedules[i].active) continue;
+
+    if (json != "[") json += ",";
+
+    json += "{";
+    json += "\"relay\":" + String(schedules[i].relay) + ",";
+    json += "\"on\":\"" + String(schedules[i].onH) + ":" + String(schedules[i].onM) + "\",";
+    json += "\"off\":\"" + String(schedules[i].offH) + ":" + String(schedules[i].offM) + "\"";
+    json += "}";
+  }
+
+  json += "]";
+
+  server.send(200, "application/json", json);
+});
+
+server.on("/api/schedule/delete", []() {
+
+  if (!server.hasArg("id")) {
+    server.send(400, "text/plain", "missing id");
+    return;
+  }
+
+  int id = server.arg("id").toInt();
+
+  if (id >= 0 && id < MAX_SCHEDULE) {
+    schedules[id].active = false;
+  }
+
+  server.send(200, "text/plain", "OK");
+});
+
+  server.begin();
+}
+
+// ================= SETUP =================
+void setup(){
+
+  Serial.begin(115200);
+  pinMode(BTN_RESET, INPUT_PULLUP);
+
+  deviceId = getDeviceID();
+
+  pinMode(LED_R, OUTPUT);
+  pinMode(LED_G, OUTPUT);
+  pinMode(LED_B, OUTPUT);
+
+  ledcSetup(CH_R, PWM_FREQ, PWM_RES);
+  ledcSetup(CH_G, PWM_FREQ, PWM_RES);
+  ledcSetup(CH_B, PWM_FREQ, PWM_RES);
+
+  ledcAttachPin(LED_R, CH_R);
+  ledcAttachPin(LED_G, CH_G);
+  ledcAttachPin(LED_B, CH_B);
+
+  // tắt hết LED (vì active LOW)
+  digitalWrite(LED_R, HIGH);
+  digitalWrite(LED_G, HIGH);
+  digitalWrite(LED_B, HIGH);
+
+  pinMode(RELAY1, OUTPUT);
+  pinMode(RELAY2, OUTPUT);
+  pinMode(RELAY3, OUTPUT);
+
+  digitalWrite(RELAY1,HIGH);
+  state1 = true;
+
+  digitalWrite(RELAY2,HIGH);
+  digitalWrite(RELAY3,HIGH);
+
+  tft.init();
+  tft.setRotation(1);
+  ts.begin();
+
+  loadWiFi();
+
+  // 🔥 DUAL MODE
+  WiFi.mode(WIFI_AP_STA);
+
+  connectWiFi();
+
+  // luôn bật AP
+  WiFi.softAP(deviceId.c_str(), "12345678");
+
+  Serial.println("AP IP: ");
+  Serial.println(WiFi.softAPIP());
+
+  client.setServer(mqtt_server,1883);
+  client.setCallback(callback);
+
+  configTime(gmtOffset_sec,0,ntpServer);
+
+  drawUI();
+
+  setupServer();
+}
+
+void setRGB(bool r, bool g, bool b){
+  uint8_t dim = 10; // độ sáng dịu (5–15)
+
+  // active LOW → đảo giá trị
+  uint8_t rVal = r ? (255 - dim) : 255;
+  uint8_t gVal = g ? (255 - dim) : 255;
+  uint8_t bVal = b ? (255 - dim) : 255;
+
+  ledcWrite(CH_R, rVal);
+  ledcWrite(CH_G, gVal);
+  ledcWrite(CH_B, bVal);
+}
+
+// ================= LOOP =================
+void loop(){
+
+  // ===== RGB STATUS =====
+  if (WiFi.status() != WL_CONNECTED) {
+    // 🔴 mất WiFi
+    setRGB(true, false, false);
+  }
+  else if (client.connected()) {
+    // 🔵 MQTT OK
+    setRGB(false, false, true);
+  }
+  else {
+    // 🟢 WiFi OK nhưng MQTT chưa
+    setRGB(false, true, false);
+  }
+
+  if (digitalRead(BTN_RESET) == LOW) {
+    prefs.begin("wifi", false);
+    prefs.clear();
+    prefs.end();
+    ESP.restart();
+  }
+
+  server.handleClient();
+
+  // MQTT
+  if (WiFi.status() == WL_CONNECTED) {
+    if (!client.connected()) reconnectMQTT();
+    client.loop();
+  }
+
+  // auto reconnect WiFi
+  if (WiFi.status() != WL_CONNECTED) {
+    WiFi.reconnect();
+  }
+
+  // ===== TIME chạy mỗi loop (mượt) =====
+  drawTime();
+
+  // ===== HEADER update chậm (2s) =====
+  static unsigned long lastHeader = 0;
+  if (millis() - lastHeader > 2000) {
+    lastHeader = millis();
+    drawHeader();
+  }
+
+  // ===== MQTT gửi chậm (2s) =====
+  static unsigned long lastMQTT = 0;
+  if (millis() - lastMQTT > 2000) {
+    lastMQTT = millis();
+    sendStatusMQTT();
+  }
+
+  resetScheduleDaily();
+  handleSchedule();
+} , nhưng khi tôi tách code ra nhằm mục đích dễ quản lí bảo trì nhưng vấn đề nó bị lag bị delay nhẹ khi bấm thao tác relay đóng/mở on/off nghĩa là khi tôi bấm on thì màn hình tft nhóp cái phần hiển thị time bị nhấp nhảy rồi hiện tại thao tác đống mở điều bị lag nhẹ kiểm tra giúp tôi lỗi ở đâu trong đó main.cpp mới #include <Arduino.h>
+#include "time.h"
+
+#include "config.h"
+#include "core/globals.h"
+#include "wifi/wifi_manager.h"
+#include "mqtt/mqtt_manager.h"
+#include "ui/ui.h"
+#include "relay/relay.h"
+#include "schedule/schedule.h"
+#include "server/web_server.h"
+
+void setup() {
+  Serial.begin(115200);
+  pinMode(BTN_RESET, INPUT_PULLUP);
+
+  deviceId = getDeviceID();
+  
+  initRelays();
+  initUI();
+  loadWiFi();
+  initWiFi();
+  initMQTT();
+  
+  configTime(GMT_OFFSET_SEC, 0, NTP_SERVER);
+  
+  drawUI();
+  setupServer();
+  initSchedules();
+}
+
+void loop() {
+  updateRGBStatus();
+
+  if (digitalRead(BTN_RESET) == LOW) {
+    prefs.begin("wifi", false);
+    prefs.clear();
+    prefs.end();
+    ESP.restart();
+  }
+
+  server.handleClient();
+
+  if (WiFi.status() == WL_CONNECTED) {
+    if (!client.connected()) reconnectMQTT();
+    client.loop();
+  }
+
+  if (WiFi.status() != WL_CONNECTED) {
+    WiFi.reconnect();
+  }
+
+  drawTime();
+
+  static unsigned long lastHeader = 0;
+  if (millis() - lastHeader > 2000) {
+    lastHeader = millis();
+    drawHeader();
+  }
+
+  static unsigned long lastMQTT = 0;
+  if (millis() - lastMQTT > 2000) {
+    lastMQTT = millis();
+    sendStatusMQTT();
+  }
+
+  resetScheduleDaily();
+  handleSchedule();
+} và config.h: #ifndef CONFIG_H
+#define CONFIG_H
+
+#include <Arduino.h>
+
+// ===== PIN DEFINITIONS =====
+#define RELAY1 27
+#define RELAY2 22
+#define RELAY3 21
+
+#define TOUCH_CS 33
+#define BTN_RESET 0
+
+// ===== RGB LED =====
+#define LED_R 4
+#define LED_G 16
+#define LED_B 17
+
+// ===== PWM CHANNEL =====
+#define CH_R 0
+#define CH_G 1
+#define CH_B 2
+
+// ===== PWM CONFIG =====
+#define PWM_FREQ 5000
+#define PWM_RES  8
+
+// ===== AUTH =====
+#define ADMIN_USER "admin"
+#define ADMIN_PASS "0345030913"
+
+// ===== MQTT =====
+#define MQTT_SERVER "broker.hivemq.com"
+#define MQTT_PORT 1883
+
+// ===== TIME =====
+#define NTP_SERVER "pool.ntp.org"
+#define GMT_OFFSET_SEC (7 * 3600)
+
+// ===== WIFI =====
+#define MAX_WIFI 5
+
+// ===== SCHEDULE =====
+#define MAX_SCHEDULE 10
+
+#endif và relay.h: #ifndef RELAY_H
+#define RELAY_H
+
+#include <Arduino.h>
+#include "../config.h"
+
+void initRelays();
+void relay1_on();
+void relay1_off();
+void relay2_on();
+void relay2_off();
+void relay3_on();
+void relay3_off();
+void setRGB(bool r, bool g, bool b);
+void updateRGBStatus();
+
+#endif và relay.cpp : #include "relay.h"
+#include "../core/globals.h"
+#include "../ui/ui.h"
+
+void initRelays() {
+  pinMode(RELAY1, OUTPUT);
+  pinMode(RELAY2, OUTPUT);
+  pinMode(RELAY3, OUTPUT);
+  pinMode(LED_R, OUTPUT);
+  pinMode(LED_G, OUTPUT);
+  pinMode(LED_B, OUTPUT);
+
+  ledcSetup(CH_R, PWM_FREQ, PWM_RES);
+  ledcSetup(CH_G, PWM_FREQ, PWM_RES);
+  ledcSetup(CH_B, PWM_FREQ, PWM_RES);
+
+  ledcAttachPin(LED_R, CH_R);
+  ledcAttachPin(LED_G, CH_G);
+  ledcAttachPin(LED_B, CH_B);
+
+  digitalWrite(LED_R, HIGH);
+  digitalWrite(LED_G, HIGH);
+  digitalWrite(LED_B, HIGH);
+
+  digitalWrite(RELAY1, HIGH);
+  state1 = true;
+  digitalWrite(RELAY2, HIGH);
+  digitalWrite(RELAY3, HIGH);
+}
+
+void relay1_on() {
+  state1 = true;
+  digitalWrite(RELAY1, HIGH);
+  drawUI();
+}
+
+void relay1_off() {
+  state1 = false;
+  digitalWrite(RELAY1, LOW);
+  drawUI();
+}
+
+void relay2_on() {
+  state2 = true;
+  digitalWrite(RELAY2, LOW);
+  drawUI();
+}
+
+void relay2_off() {
+  state2 = false;
+  digitalWrite(RELAY2, HIGH);
+  drawUI();
+}
+
+void relay3_on() {
+  state3 = true;
+  digitalWrite(RELAY3, LOW);
+  drawUI();
+}
+
+void relay3_off() {
+  state3 = false;
+  digitalWrite(RELAY3, HIGH);
+  drawUI();
+}
+
+void setRGB(bool r, bool g, bool b) {
+  uint8_t dim = 10;
+  uint8_t rVal = r ? (255 - dim) : 255;
+  uint8_t gVal = g ? (255 - dim) : 255;
+  uint8_t bVal = b ? (255 - dim) : 255;
+
+  ledcWrite(CH_R, rVal);
+  ledcWrite(CH_G, gVal);
+  ledcWrite(CH_B, bVal);
+}
+
+void updateRGBStatus() {
+  if (WiFi.status() != WL_CONNECTED) {
+    setRGB(true, false, false);
+  } else if (client.connected()) {
+    setRGB(false, false, true);
+  } else {
+    setRGB(false, true, false);
+  }
+} và ui.h : #ifndef UI_H
+#define UI_H
+
+#include <Arduino.h>
+
+void initUI();
+void drawUI();
+void drawHeader();
+void drawTime();
+void drawRelays();
+void drawFooter();
+void drawRelayCompact(int y, const char* name, const char* pin, bool state);
+int getWiFiPercent();
+
+#endif và ui.cpp : #include "ui.h"
+#include "../config.h"
+#include "../core/globals.h"
+#include "../relay/relay.h"
+#include "time.h"
+
+#define BG_COLOR       0x0841
+#define CARD_COLOR     0x1082
+#define BORDER_COLOR   0x2104
+#define TEXT_PRIMARY   0xFFFF
+#define TEXT_SECONDARY 0x7BEF
+#define ACCENT_COLOR   0x2D7F
+#define TIME_COLOR     0xFD20
+
+void initUI() {
+  tft.init();
+  tft.setRotation(1);
+  ts.begin();
+}
+
+int getWiFiPercent() {
+  int rssi = WiFi.RSSI();
+  if (rssi <= -100) return 0;
+  if (rssi >= -50) return 100;
+  return 2 * (rssi + 100);
+}
+
+void drawHeader() {
+  tft.fillRect(0, 0, 320, 40, BG_COLOR);
+  tft.drawFastHLine(0, 39, 320, BORDER_COLOR);
+  tft.setTextSize(1);
+
+  tft.setTextColor(ACCENT_COLOR, BG_COLOR);
+  tft.setCursor(5, 5);
+  tft.print("ID:");
+  tft.setTextColor(TEXT_PRIMARY, BG_COLOR);
+  tft.print(deviceId.substring(0, 10));
+
+  String apStr = "AP:" + WiFi.softAPIP().toString();
+  int16_t apX = 320 - tft.textWidth(apStr) - 5;
+  tft.setCursor(apX, 5);
+  tft.setTextColor(TEXT_SECONDARY, BG_COLOR);
+  tft.print("AP:");
+  tft.setTextColor(TEXT_PRIMARY, BG_COLOR);
+  tft.print(WiFi.softAPIP());
+
+  String wifiName = WiFi.status() == WL_CONNECTED ? WiFi.SSID() : "No WiFi";
+  if (wifiName.length() > 16) {
+    wifiName = wifiName.substring(0, 16);
+  }
+  tft.setCursor(5, 22);
+  tft.setTextColor(ACCENT_COLOR, BG_COLOR);
+  tft.print(wifiName);
+
+  String ipStr = "IP:" + WiFi.localIP().toString();
+  int16_t ipX = 320 - tft.textWidth(ipStr) - 5;
+  tft.setCursor(ipX, 22);
+  tft.setTextColor(TEXT_SECONDARY, BG_COLOR);
+  tft.print("IP:");
+  tft.setTextColor(TEXT_PRIMARY, BG_COLOR);
+  tft.print(WiFi.localIP());
+}
+
+void drawTime() {
+  static int lastSec = -1;
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo)) return;
+
+  if (timeinfo.tm_sec == lastSec) return;
+  lastSec = timeinfo.tm_sec;
+
+  char timeStr[9];
+  char dateStr[12];
+  strftime(timeStr, sizeof(timeStr), "%H:%M:%S", &timeinfo);
+  strftime(dateStr, sizeof(dateStr), "%d/%m/%Y", &timeinfo);
+
+  tft.setTextSize(3);
+  int16_t timeX = (320 - tft.textWidth(timeStr)) / 2;
+  tft.setTextColor(TIME_COLOR, BG_COLOR);
+  tft.setCursor(timeX, 55);
+  tft.print(timeStr);
+
+  static int lastDay = -1;
+  if (timeinfo.tm_mday != lastDay) {
+    lastDay = timeinfo.tm_mday;
+    tft.setTextSize(1);
+    int16_t dateX = (320 - tft.textWidth(dateStr)) / 2;
+    tft.fillRect(0, 80, 320, 20, BG_COLOR);
+    tft.setTextColor(TEXT_SECONDARY, BG_COLOR);
+    tft.setCursor(dateX, 85);
+    tft.print(dateStr);
+  }
+}
+
+void drawRelayCompact(int y, const char* name, const char* pin, bool state) {
+  int x = 10;
+  int w = 300;
+  int h = 38;
+
+  uint16_t border = state ? 0x07E0 : 0xF800;
+
+  tft.fillRoundRect(x, y, w, h, 6, CARD_COLOR);
+  tft.drawRoundRect(x, y, w, h, 6, border);
+  tft.fillCircle(x + 15, y + h/2, 5, border);
+
+  tft.setTextColor(TEXT_PRIMARY, CARD_COLOR);
+  tft.setTextSize(1);
+  tft.setCursor(x + 28, y + 10);
+  tft.print(name);
+
+  tft.setTextColor(TEXT_SECONDARY, CARD_COLOR);
+  tft.setCursor(x + 28, y + 24);
+  tft.print(pin);
+
+  uint16_t btnColor = state ? 0x07E0 : 0xF800;
+  uint16_t textColor = state ? TFT_BLACK : TFT_WHITE;
+
+  tft.fillRoundRect(x + w - 50, y + 8, 40, 22, 4, btnColor);
+  tft.setTextColor(textColor);
+
+  String label = state ? "ON" : "OFF";
+  int16_t tx = x + w - 50 + (40 - tft.textWidth(label)) / 2;
+  int16_t ty = y + 8 + (22 / 2) - 4;
+  tft.setCursor(tx, ty);
+  tft.print(label);
+}
+
+void drawRelays() {
+  drawRelayCompact(100, "DISPLAY33", "GPIO27", state1);
+  drawRelayCompact(145, "RELAY 2", "GPIO22", state2);
+  drawRelayCompact(190, "RELAY 3", "GPIO21", state3);
+}
+
+void drawFooter() {
+  tft.fillRect(0, 240, 320, 40, BG_COLOR);
+  tft.drawFastHLine(0, 240, 320, BORDER_COLOR);
+
+  tft.setTextColor(TEXT_SECONDARY, BG_COLOR);
+  tft.setCursor(10, 250);
+  tft.print("MQTT:");
+  tft.setTextColor(client.connected() ? 0x07E0 : 0xF800, BG_COLOR);
+  tft.print(client.connected() ? " ON" : " OFF");
+
+  tft.setCursor(150, 250);
+  tft.setTextColor(TEXT_SECONDARY, BG_COLOR);
+  tft.print("RSSI:");
+  tft.setTextColor(TEXT_PRIMARY, BG_COLOR);
+  tft.print(WiFi.RSSI());
+
+  tft.setCursor(10, 265);
+  tft.setTextColor(TEXT_SECONDARY, BG_COLOR);
+  tft.print("UP:");
+  unsigned long up = millis() / 1000;
+  tft.setTextColor(TEXT_PRIMARY, BG_COLOR);
+  tft.print(up / 3600);
+  tft.print("h");
+}
+
+void drawUI() {
+  tft.fillScreen(BG_COLOR);
+  drawHeader();
+  drawTime();
+  drawRelays();
+  drawFooter();
+}
