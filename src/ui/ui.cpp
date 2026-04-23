@@ -140,7 +140,7 @@ void drawRelayCompact(int y, const char* name, const char* pin, bool state) {
 
 void drawRelays() {
   tft.setTextSize(1);
-  drawRelayCompact(100, "DISPLAY33", "GPIO27", state1);
+  drawRelayCompact(100, "DISPLAY", "GPIO27", state1);
   drawRelayCompact(145, "RELAY 2", "GPIO22", state2);
   drawRelayCompact(190, "RELAY 3", "GPIO21", state3);
 }
