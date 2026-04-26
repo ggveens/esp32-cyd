@@ -5,6 +5,8 @@
 #include "wifi/wifi_manager.h"
 #include "mqtt/mqtt_manager.h"
 #include "ui/ui.h"
+#include "ui/ui2.h"
+#include "touch/touch.h"
 #include "relay/relay.h"
 #include "schedule/schedule.h"
 #include "server/web_server.h"
@@ -32,6 +34,9 @@ void setup(){
   tft.init();          // 🔥 init TFT 1 lần duy nhất
   tft.setRotation(1);  // 🔥 xoay màn hình
 
+  ts.begin();
+  ts.setRotation(1);
+
   pinMode(RELAY1, OUTPUT);
   pinMode(RELAY2, OUTPUT);
   pinMode(RELAY3, OUTPUT);
@@ -46,12 +51,13 @@ void setup(){
 
   WiFi.mode(WIFI_AP_STA);
   connectWiFi();
-  WiFi.softAP(deviceId.c_str(), "12345678");
+  WiFi.softAP(deviceId.c_str(), "minhkhongbiet");
 
   setupMQTT();
 
   configTime(GMT_OFFSET,0,NTP_SERVER);
   
+  currentScreen = SCREEN_MAIN;
   drawUI();
 
   setupServer();
@@ -69,12 +75,33 @@ void loop(){
   }
 
   server.handleClient();
-
+  handleTouch();
   mqttLoop();
 
   if (WiFi.status() != WL_CONNECTED) {
     WiFi.reconnect();
   }
+
+  // =========================
+  // 🔥 QUẢN LÝ SCREEN
+  // =========================
+  static uint8_t lastScreen = 255;
+
+  if (currentScreen != lastScreen) {
+    lastScreen = currentScreen;
+
+    if (currentScreen == SCREEN_MAIN) {
+      drawUI();
+    } 
+    else if (currentScreen == SCREEN_2) {
+      drawUI2();
+    }
+  }
+
+  // =========================
+  // 🔥 UPDATE UI THEO SCREEN
+  // =========================
+if (currentScreen == SCREEN_MAIN) {
 
   drawTime();
 
@@ -83,7 +110,19 @@ void loop(){
     lastHeader = millis();
     drawHeader();
   }
+}
+else if (currentScreen == SCREEN_2) {
 
+  static unsigned long lastAnim = 0;
+  if (millis() - lastAnim > 50) {
+    lastAnim = millis();
+    updateUI2();
+  }
+}
+
+  // =========================
+  // 🔥 LOGIC KHÁC (GIỮ NGUYÊN)
+  // =========================
   static unsigned long lastMQTT = 0;
   if (millis() - lastMQTT > 2000) {
     lastMQTT = millis();

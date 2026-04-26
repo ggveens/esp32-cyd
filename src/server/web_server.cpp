@@ -11,6 +11,16 @@
 // const char* adminUser = "admin";
 // const char* adminPass = "0345030913";
 
+void handleScreen1() {
+  currentScreen = SCREEN_MAIN;
+  server.send(200, "text/plain", "OK");
+}
+
+void handleScreen2() {
+  currentScreen = SCREEN_2;
+  server.send(200, "text/plain", "OK");
+}
+
 // ===== WIFI =====
 void handleScanWiFi() {
 
@@ -127,6 +137,17 @@ void setupServer(){
     <div class="device-id">NODE: )rawliteral" + deviceId + R"rawliteral(</div>
 
     <div class="container">
+
+    <div class="card">
+    <div class="relay-row">
+        <span class="relay-name">MÀN HÌNH</span>
+        <div class="btn-group">
+            <button class="btn-on" onclick="send('/screen/1')">UI 1</button>
+            <button class="btn-off" onclick="send('/screen/2')">UI 2</button>
+        </div>
+    </div>
+</div>
+
         <div class="card">
             <div class="relay-row">
                 <span class="relay-name">RELAY 1 <small style="display:block; font-weight:400; opacity:0.6">Màn hình LCD</small></span>
@@ -294,6 +315,9 @@ void setupServer(){
   server.on("/api/wifi/list", handleListSavedWiFi);
   server.on("/api/wifi/set", handleSetWiFi);
   server.on("/api/reset", handleResetDevice);
+
+  server.on("/screen/1", handleScreen1);
+  server.on("/screen/2", handleScreen2);
 
   // SCHEDULE (giữ nguyên logic)
   server.on("/api/schedule/add", []() {

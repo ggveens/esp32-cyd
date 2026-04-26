@@ -5,6 +5,7 @@
 #include <WiFi.h>
 #include <Preferences.h>
 #include <TFT_eSPI.h>
+#include <XPT2046_Touchscreen.h>
 
 // ===== GLOBAL OBJECTS =====
 extern WebServer server;
@@ -35,3 +36,14 @@ struct Schedule {
 };
 
 extern Schedule schedules[];
+
+// ===== SCREEN =====
+enum Screen {
+  SCREEN_MAIN,
+  SCREEN_2,
+  SCREEN_3
+};
+
+extern Screen currentScreen;
+
+extern XPT2046_Touchscreen ts;

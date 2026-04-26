@@ -17,7 +17,7 @@ This board is widely adopted in the maker community for creating:
 * Embedded GUI systems
 * Real-time monitoring interfaces
 
-Unlike traditional setups that require separate ESP32 + display wiring, the CYD integrates everything into a single, ready-to-use platform.
+Unlike traditional setups that require separate ESP32 + display wiring,the CYD integrates everything into a single, ready-to-use platform.
 
 📖 Reference: Random Nerd Tutorials ([Random Nerd Tutorials][1])
 

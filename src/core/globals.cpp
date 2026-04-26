@@ -1,6 +1,7 @@
 #include "globals.h"
 #include "../config.h"
 #include <TFT_eSPI.h>
+#include <XPT2046_Touchscreen.h>
 
 WebServer server(80);
 WiFiClient espClient;
@@ -17,3 +18,7 @@ bool state2 = false;
 bool state3 = false;
 
 Schedule schedules[MAX_SCHEDULE];
+
+Screen currentScreen = SCREEN_MAIN;
+
+XPT2046_Touchscreen ts(TOUCH_CS, 36);

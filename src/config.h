@@ -8,6 +8,9 @@
 #define RELAY2 22
 #define RELAY3 21
 
+#define RELAY_ON  HIGH
+#define RELAY_OFF LOW
+
 // ===== RGB =====
 #define LED_R 4
 #define LED_G 16

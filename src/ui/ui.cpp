@@ -7,9 +7,6 @@
 #include <WiFi.h>
 #include <time.h>
 
-// ===== TOUCH =====
-XPT2046_Touchscreen ts(TOUCH_CS);
-
 // 🎨 Palette
 #define BG_COLOR       0x0841
 #define CARD_COLOR     0x1082
