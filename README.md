@@ -1,4 +1,8 @@
-# ESP32 CYD (Cheap Yellow Display) Configuration
+# ESP32 CYD Vession v1.0.1 (Cheap Yellow Display) Configuration 
+
+<p align="center">
+  <img src="public/imgage/233870a0-50fa-4519-9d58-e3c04f9747fa.jpeg" alt="ESP32 CYD Hardware" width="500">
+</p>
 
 Dự án này chứa mã nguồn cấu hình tối ưu hóa cho màn hình **ESP32 CYD (Cheap Yellow Display)** sử dụng thư viện **TFT_eSPI** của Bodmer. File cấu hình `User_Setup.h` đã được tinh chỉnh, dọn dẹp sạch sẽ và sẵn sàng để nạp trực tiếp.
 
