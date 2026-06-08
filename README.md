@@ -7,7 +7,7 @@
 Dự án này chứa mã nguồn cấu hình tối ưu hóa cho màn hình **ESP32 CYD (Cheap Yellow Display)** sử dụng thư viện **TFT_eSPI** của Bodmer. File cấu hình `User_Setup.h` đã được tinh chỉnh, dọn dẹp sạch sẽ và sẵn sàng để nạp trực tiếp.
 
 <p align="center">
-  <b>📷 ALBUM HÌNH ẢNH DỰ ÁN</b>
+  <b>📷 ALBUM HÌNH ẢNH DỰ ÁN THỰC TẾ</b>
 </p>
 <table align="center">
   <tr>
