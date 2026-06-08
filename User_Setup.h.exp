@@ -1,0 +1,72 @@
+/* Rui Santos & Sara Santos - Random Nerd Tutorials
+  Mã nguồn cấu hình TFT_eSPI cho CYD (Cheap Yellow Display) / ESP32 TFT
+  Chi tiết: https://RandomNerdTutorials.com/cyd/
+*/
+
+// Định danh cấu hình hệ thống
+#define USER_SETUP_INFO "User_Setup"
+
+// ==================================================================================
+// PHẦN 1: CẤU HÌNH DRIVER MÀN HÌNH & KÍCH THƯỚC
+// ==================================================================================
+
+// Sử dụng Driver ILI9341_2 cho màn hình CYD / ESP32 TFT nâng cao
+#define ILI9341_2_DRIVER     
+// #define ILI9341_DRIVER // Nếu sử dụng Driver ILI9341 tiêu chuẩn, hãy bỏ comment dòng này và comment dòng trên
+// Định nghĩa độ phân giải màn hình (Chế độ dọc chuẩn)
+#define TFT_WIDTH  240 
+#define TFT_HEIGHT 320 
+
+
+// ==================================================================================
+// PHẦN 2: CẤU HÌNH CHÂN KẾT NỐI (PINS) CHO ESP32
+// ==================================================================================
+
+// Cấu hình Đèn nền (Backlight)
+#define TFT_BL   21            // Chân điều khiển đèn nền LED
+#define TFT_BACKLIGHT_ON HIGH  // Kích mức HIGH để BẬT đèn nền
+
+// Cấu hình các chân SPI cho Màn hình TFT
+#define TFT_MISO 12
+#define TFT_MOSI 13
+#define TFT_SCLK 14
+#define TFT_CS   15            // Chân Chip Select của màn hình
+#define TFT_DC    2            // Chân Data/Command
+#define TFT_RST  -1            // Đặt -1 vì chân Reset màn hình nối chung với Reset của ESP32
+
+// Cấu hình chân cho Cảm ứng (Touch Screen)
+#define TOUCH_CS 33            // Chân Chip Select của IC cảm ứng (XPT2046)
+
+
+// ==================================================================================
+// PHẦN 3: CẤU HÌNH FONT CHỮ (FONTS)
+// ==================================================================================
+
+// Kích hoạt các Font chữ được tải vào bộ nhớ FLASH
+#define LOAD_GLCD   // Font 1: Font Adafruit 8-pixel nguyên bản (~1.8 Kbytes)
+#define LOAD_FONT2  // Font 2: Font nhỏ 16-pixel (~3.5 Kbytes)
+#define LOAD_FONT4  // Font 4: Font vừa 26-pixel (~5.8 Kbytes)
+#define LOAD_FONT6  // Font 6: Font lớn 48-pixel (Chỉ gồm số và ký tự đặc biệt)
+#define LOAD_FONT7  // Font 7: Font 7 đoạn 48-pixel (Chỉ gồm số và ký tự đặc biệt)
+#define LOAD_FONT8  // Font 8: Font siêu lớn 75-pixel (Chỉ gồm số và ký tự đặc biệt)
+#define LOAD_GFXFF  // Kích hoạt thư viện FreeFonts (Hỗ trợ 48 font tùy biến mã nguồn Adafruit)
+
+// Kích hoạt tính năng Font chữ mượt (Smooth Font) chống răng cưa
+#define SMOOTH_FONT
+
+
+// ==================================================================================
+// PHẦN 4: CẤU HÌNH TỐC ĐỘ GIAO TIẾP (SPI FREQUENCY)
+// ==================================================================================
+
+// Tần số SPI khi Ghi dữ liệu ra màn hình (55MHz giúp hiển thị cực mượt)
+#define SPI_FREQUENCY  55000000 
+
+// Tần số SPI khi Đọc dữ liệu từ màn hình
+#define SPI_READ_FREQUENCY  20000000
+
+// Tần số SPI cho Bộ điều khiển Cảm ứng (XPT2046 yêu cầu tối đa 2.5MHz)
+#define SPI_TOUCH_FREQUENCY  2500000
+
+// Ép buộc thư viện sử dụng cổng HSPI của ESP32 thay vì VSPI mặc định
+#define USE_HSPI_PORT

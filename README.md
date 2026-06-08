@@ -2,6 +2,14 @@
 
 ![ESP32 CYD](https://raw.githubusercontent.com/ggveens/esp32-cyd/23000b4b5526967568f51b23c35c5be6606036c1/public/imgage/233870a0-50fa-4519-9d58-e3c04f9747fa.jpeg)
 
+## 📁 
+```text
+esp32-cyd/
+├── User_Setup.h         
+├── LICENSE            
+├── COPYRIGHT.md      
+└── README.md         
+
 > A powerful all-in-one ESP32 development board with integrated touchscreen display – designed for building modern IoT interfaces.
 
 ---
