@@ -1,7 +1,11 @@
 #pragma once
+#include <Arduino.h>
 
-void relay1_on();
-void relay1_off();
+// Cờ pending: loop() kiểm tra để drawRelays() sau khi handler trả response
+extern volatile bool relayUpdatePending;
+
+void screendiplaytft_on();
+void screendiplaytft_off();
 void relay2_on();
 void relay2_off();
 void relay3_on();

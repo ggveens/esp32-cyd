@@ -1,14 +1,15 @@
+// globals.cpp — Khởi tạo biến toàn cục
+// XPT2046_Touchscreen ĐÃ BỊ XÓA — dùng tft.getTouch() built-in
 #include "globals.h"
 #include "../config.h"
 #include <TFT_eSPI.h>
-#include <XPT2046_Touchscreen.h>
 
-WebServer server(80);
-WiFiClient espClient;
+WebServer    server(80);
+WiFiClient   espClient;
 PubSubClient client(espClient);
-Preferences prefs;
-TFT_eSPI tft = TFT_eSPI();
-String deviceId;
+Preferences  prefs;
+TFT_eSPI     tft = TFT_eSPI();
+String       deviceId;
 
 String ssids[MAX_WIFI];
 String passes[MAX_WIFI];
@@ -20,5 +21,3 @@ bool state3 = false;
 Schedule schedules[MAX_SCHEDULE];
 
 Screen currentScreen = SCREEN_MAIN;
-
-XPT2046_Touchscreen ts(TOUCH_CS, 36);

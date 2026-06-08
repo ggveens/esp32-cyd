@@ -1,3 +1,4 @@
+// schedule.cpp — Xử lý lịch bật/tắt relay theo thời gian
 #include "schedule.h"
 #include "../core/globals.h"
 #include "../relay/relay.h"
@@ -38,7 +39,7 @@ void handleSchedule() {
 
       schedules[i].firedOn = true;
 
-      if (schedules[i].relay == 1) relay1_on();
+      if (schedules[i].relay == 1) screendiplaytft_on();
       if (schedules[i].relay == 2) relay2_on();
       if (schedules[i].relay == 3) relay3_on();
     }
@@ -49,7 +50,7 @@ void handleSchedule() {
 
       schedules[i].firedOff = true;
 
-      if (schedules[i].relay == 1) relay1_off();
+      if (schedules[i].relay == 1) screendiplaytft_off();
       if (schedules[i].relay == 2) relay2_off();
       if (schedules[i].relay == 3) relay3_off();
     }
