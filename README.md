@@ -1,207 +1,32 @@
-# 🚀 ESP32 Cheap Yellow Display (CYD) – Smart TFT IoT Interface
+# ESP32 CYD (Cheap Yellow Display) Configuration
 
-![ESP32 CYD](https://raw.githubusercontent.com/ggveens/esp32-cyd/23000b4b5526967568f51b23c35c5be6606036c1/public/imgage/233870a0-50fa-4519-9d58-e3c04f9747fa.jpeg)
+Dự án này chứa mã nguồn cấu hình tối ưu hóa cho màn hình **ESP32 CYD (Cheap Yellow Display)** sử dụng thư viện **TFT_eSPI** của Bodmer. File cấu hình `User_Setup.h` đã được tinh chỉnh, dọn dẹp sạch sẽ và sẵn sàng để nạp trực tiếp.
 
-## 📁 
+> ⚠️ **LƯU Ý:** Dự án hiện **đang trong quá trình phát triển (Under Development)**. Các tính năng và cấu hình chân có thể thay đổi.
+
+## 🚀 Tính năng & Cấu hình hiện tại
+- **Driver màn hình:** `ILI9341_2_DRIVER` (Phiên bản driver tối ưu cho CYD).
+- **Độ phân giải:** 240 x 320 pixel.
+- **Giao tiếp SPI:** Sử dụng cổng `HSPI` trên ESP32 để tối ưu hóa hiệu năng hiển thị.
+- **Tốc độ:** Tần số ghi SPI đạt `55MHz` giúp phản hồi đồ họa cực mượt.
+- **Cảm ứng:** Tích hợp bộ điều khiển cảm ứng `XPT2046` trên chân `TOUCH_CS 33` với tần số ổn định `2.5MHz`.
+- **Đèn nền (Backlight):** Điều khiển qua chân `GPIO 21` (Mức cao - `HIGH`).
+- **Font chữ:** Tích hợp sẵn bộ Font 1, 2, 4, 6, 7, 8 và `SMOOTH_FONT` chống răng cưa.
+
+## 📁 Cấu trúc thư mục khuyến nghị
 ```text
 esp32-cyd/
-├── User_Setup.h         
-├── LICENSE            
-├── COPYRIGHT.md      
-└── README.md         
-
-> A powerful all-in-one ESP32 development board with integrated touchscreen display – designed for building modern IoT interfaces.
-
----
-
-## 📌 Overview
-
-The **ESP32 Cheap Yellow Display (CYD)**, also known as **ESP32-2432S028R**, is a compact and cost-effective development board that combines an **ESP32 microcontroller** with a **2.8-inch TFT touchscreen display**.
-
-This board is widely adopted in the maker community for creating:
-
-* Smart home dashboards
-* IoT control panels
-* Embedded GUI systems
-* Real-time monitoring interfaces
-
-Unlike traditional setups that require separate ESP32 + display wiring,the CYD integrates everything into a single, ready-to-use platform.
-
-📖 Reference: Random Nerd Tutorials ([Random Nerd Tutorials][1])
-
----
-
-## ✨ Key Features
-
-* ⚡ **ESP32-WROOM-32 dual-core MCU**
-* 📶 Integrated **Wi-Fi & Bluetooth**
-* 🖥️ **2.8” TFT LCD Touchscreen (ILI9341)**
-* 🎯 Resolution: **240 × 320 pixels**
-* 💾 **MicroSD card support**
-* 🌈 Built-in **RGB LED**
-* 🔌 Multiple GPIO expansion pins
-* 🔋 Powered via **5V USB**
-* 🧠 Supports:
-
-  * Arduino IDE
-  * MicroPython
-  * ESP-IDF
-
----
-
-## 📊 Specifications
-
-| Feature      | Details                        |
-| ------------ | ------------------------------ |
-| MCU          | ESP32 Dual-core (up to 240MHz) |
-| RAM          | 520KB SRAM                     |
-| Flash        | 4MB                            |
-| Display      | 2.8" TFT (ILI9341)             |
-| Resolution   | 240x320                        |
-| Touch        | Resistive                      |
-| Connectivity | Wi-Fi + Bluetooth              |
-| Power        | 5V                             |
-| Size         | 50 × 86 mm                     |
-
----
-
-## 🧩 Hardware Overview
-
-The CYD board integrates multiple components into a single module:
-
-* 📺 TFT display + touchscreen (SPI communication)
-* 💡 RGB LED (GPIO 4, 16, 17)
-* 💾 MicroSD card interface
-* 🔌 Extended GPIO pins (GPIO 21, 22, 27, 35...)
-* 🔗 Serial communication (TX/RX)
-
-👉 This integration makes it **ideal for GUI-based embedded systems** without complex wiring. ([Random Nerd Tutorials][1])
-
----
-
-## 🛠️ Getting Started
-
-### 1. Requirements
-
-* Arduino IDE / PlatformIO
-* USB cable
-* ESP32 board package installed
-
----
-
-### 2. Required Libraries
-
-Install the following libraries:
-
-* `TFT_eSPI`
-* `XPT2046_Touchscreen`
-
-These libraries enable communication with the display and touchscreen via SPI. ([Random Nerd Tutorials][1])
-
----
-
-### 3. Configuration
-
-You must configure the `User_Setup.h` file in **TFT_eSPI** correctly to match CYD pinout.
-
-> ⚠️ Using incorrect config will result in blank screen or incorrect display.
-
----
-
-### 4. Upload First Example
-
-Basic test:
-
-* Display text on screen
-* Detect touch input (X, Y, Pressure)
-
-Expected result:
-
-* Screen shows “Hello World”
-* Touch displays coordinates
-
----
-
-## 💡 Use Cases
-
-* 🏠 Smart Home Control Panel
-* 📊 Sensor Dashboard (Temperature, MQTT, IoT)
-* 🎵 Media Controller / MP3 Player
-* 📡 WiFi Configuration UI
-* 🧠 Embedded GUI with LVGL
-
----
-
-## 🚀 Advantages
-
-✔️ All-in-one design (ESP32 + Display)
-✔️ Very low cost
-✔️ Easy to prototype GUI applications
-✔️ Strong community support
-✔️ Compatible with multiple frameworks
-
----
-
-## ⚠️ Limitations
-
-* Resistive touchscreen (not as smooth as capacitive)
-* Limited GPIO compared to standalone ESP32
-* Requires correct display configuration
-
----
-
-## 📁 Project Structure (Recommended)
-
-```
-esp32-cyd/
-├── src/
-├── include/
-├── lib/
-├── data/
-├── README.md
-├── .gitignore
+├── User_Setup.h       # File cấu hình chính cho thư viện TFT_eSPI
+├── LICENSE            # Giấy phép mã nguồn mở MIT
+├── COPYRIGHT.md       # Tuyên bố bản quyền & Tình trạng phát triển
+└── README.md          # Tài liệu hướng dẫn sử dụng này
 ```
 
----
+## 🛠️ Hướng dẫn Cài đặt nhanh
+1. Cài đặt thư viện **TFT_eSPI** của Bodmer thông qua Arduino IDE Library Manager hoặc PlatformIO.
+2. Tìm đến thư mục lưu trữ thư viện `TFT_eSPI` trên máy tính của bạn.
+3. Thay thế file `User_Setup.h` mặc định của thư viện bằng file `User_Setup.h` được cung cấp trong kho lưu trữ này.
+4. Tiến hành nạp code ví dụ (như các bài viết từ Random Nerd Tutorials) để kiểm tra màn hình và cảm ứng.
 
-## 📚 Resources
-
-* 📖 Official Guide: https://randomnerdtutorials.com/cheap-yellow-display-esp32-2432s028r/
-* 📦 TFT Library: https://github.com/Bodmer/TFT_eSPI
-* 🧠 Touch Library: https://github.com/PaulStoffregen/XPT2046_Touchscreen
-
----
-
-## 🤝 Contributing
-
-Contributions are welcome!
-
-* Fork the repository
-* Create a new branch
-* Submit a Pull Request
-
----
-
-## 📜 License
-
-This project is open-source and available under the **MIT License**.
-
----
-
-## ⭐ Support
-
-If you find this project useful:
-
-* ⭐ Star the repository
-* 🍴 Fork it
-* 📢 Share it with the community
-
----
-
-## 👨‍💻 Author
-
-Developed by **[GGveens]**
-
----
-
-> “Small board, big possibilities.” 🚀
+## 📝 Giấy phép & Bản quyền
+Dự án được phát hành theo giấy phép **MIT License**. Vui lòng xem chi tiết tại file [LICENSE](LICENSE) và [COPYRIGHT.md](COPYRIGHT.md).

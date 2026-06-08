@@ -1,59 +1,20 @@
-# Copyright Notice
+# Quy định Bản quyền & Sở hữu Trí tuệ
 
-Project: ESP32 CYD Hybrid IoT Controller
+**Dự án:** ESP32 CYD Setup (Đang trong quá trình phát triển)  
+**Tác giả:** ggveens  
+**Năm:** 2026  
 
-Author: Nguyễn Minh Nhựt
+---
 
-Copyright © 2026 Nguyễn Minh Nhựt
+## 1. Tuyên bố Bản quyền
+Bản quyền © 2026 thuộc về tác giả **ggveens**. Tất cả các quyền được bảo lưu (All Rights Reserved) ngoại trừ các quyền được cấp phép rõ ràng thông qua Giấy phép MIT đi kèm trong dự án này.
 
-All Rights Reserved.
+## 2. Tình trạng Dự án (Đang phát triển)
+Dự án **esp32-cyd** hiện vẫn **đang trong giai đoạn phát triển tích cực (In Active Development)**. 
+- Các đoạn mã nguồn, cấu hình phần cứng, sơ đồ chân và tài liệu có thể thay đổi liên tục mà không cần thông báo trước.
+- Phiên bản hiện tại có thể chứa lỗi phần mềm, lỗi cấu hình hoặc các tính năng chưa hoàn thiện. 
+- Tác giả khuyến khích việc đóng góp ý kiến (Feedback), báo lỗi (Issues) nhưng không chịu trách nhiệm về bất kỳ hỏng hóc phần cứng nào xảy ra trong quá trình sử dụng thử nghiệm.
 
-## Project Description
-
-ESP32 CYD Hybrid IoT Controller is an embedded IoT platform designed for operation in both Offline and Online modes.
-
-Main features include:
-
-* Offline Web Control
-* Online MQTT Communication
-* Touchscreen Interface
-* Relay Management
-* Scheduling System
-* WiFi Configuration
-* Hybrid Operation Architecture
-* Future Cloud Integration
-
-## Intellectual Property
-
-The following items are protected by copyright:
-
-* Source code
-* Project architecture
-* Firmware design
-* User interface concepts
-* Configuration structures
-* Documentation
-* Images and graphical assets
-* System workflows
-
-## Restrictions
-
-No individual or organization may:
-
-* Reuse significant portions of the source code.
-* Publish modified versions under another name.
-* Create commercial products based on this project.
-* Redistribute firmware binaries.
-* Remove copyright notices.
-
-without explicit written permission from the copyright holder.
-
-## Commercial Licensing
-
-Commercial licensing may be available upon request.
-
-Contact the author for details.
-
-## Effective Date
-
-This copyright notice applies to all commits and releases of this repository unless otherwise specified.
+## 3. Điều khoản Sử dụng & Đóng góp
+- **Nhân bản & Chỉnh sửa:** Bạn có quyền fork dự án, tải về và chỉnh sửa cấu hình `User_Setup.h` cho phù hợp với phần cứng cá nhân của bạn theo điều khoản của MIT License.
+- **Thương mại hóa:** Vì dự án đang phát triển và sử dụng các thư viện mã nguồn mở nguồn gốc từ cộng đồng (như TFT_eSPI của Bodmer), việc sử dụng thương mại cần được cân nhắc kỹ lưỡng và phải giữ lại toàn bộ dòng ghi công (Attribution) của tác giả gốc và các tài liệu tham khảo đi kèm.
