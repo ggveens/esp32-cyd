@@ -1,0 +1,508 @@
+// ota_manager.cpp — OTA Update Manager v1
+// ═══════════════════════════════════════════════════════════════
+//
+// HAI CƠ CHẾ OTA SONG SONG:
+//
+//  ┌─────────────────────────────────────────────────────────┐
+//  │  1. Web OTA — Upload .bin qua trình duyệt               │
+//  │     Route: GET  /ota         → trang upload HTML        │
+//  │     Route: POST /ota/upload  → nhận file .bin           │
+//  │     Dùng: Update.h (built-in ESP32 Arduino)             │
+//  │     Truy cập: http://192.168.4.1/ota (cả offline lẫn   │
+//  │               online) HOẶC http://<STA_IP>/ota          │
+//  └─────────────────────────────────────────────────────────┘
+//  ┌─────────────────────────────────────────────────────────┐
+//  │  2. ArduinoOTA — Upload từ PlatformIO/IDE qua mDNS      │
+//  │     Hostname: <deviceId>.local                          │
+//  │     Password: OTA_PASSWORD (định nghĩa trong config.h)  │
+//  │     Chỉ hoạt động khi ONLINE + WiFi STA connected       │
+//  └─────────────────────────────────────────────────────────┘
+//
+// TÍCH HỢP VỚI KIẾN TRÚC HIỆN TẠI:
+//   ✅ Trong OTA: tạm dừng MQTT loop, schedule, LED update
+//   ✅ TFT hiển thị progress bar và % hoàn thành
+//   ✅ Không block WebServer khi chưa OTA
+//   ✅ isOTAInProgress() → onlineLoop() bỏ qua MQTT/schedule
+//   ✅ Khi OTA xong: ESP.restart() tự động
+// ═══════════════════════════════════════════════════════════════
+
+#include "ota_manager.h"
+#include "../core/globals.h"
+#include "../config.h"
+#include "../ui/ui.h"
+
+#include <WiFi.h>
+#include <ArduinoOTA.h>
+#include <Update.h>
+
+// ─────────────────────────────────────────────────────────────
+// Trạng thái OTA
+// ─────────────────────────────────────────────────────────────
+static volatile bool _otaInProgress = false;
+static bool          _arduinoOTASetup = false;
+
+bool isOTAInProgress() {
+    return _otaInProgress;
+}
+
+// ─────────────────────────────────────────────────────────────
+// TFT helpers — vẽ giao diện OTA trên màn hình
+// ─────────────────────────────────────────────────────────────
+#define OTA_BG       0x0841   // Giống BG_COLOR của ui.cpp
+#define OTA_ACCENT   0x2D7F   // Cyan
+#define OTA_SUCCESS  0x07E0   // Xanh lá
+#define OTA_ERROR    0xF800   // Đỏ
+#define OTA_BAR_BG   0x2104   // Thanh nền
+#define OTA_BAR_FG   0x2D7F   // Thanh progress
+
+static void _drawOTAScreen(const char* title, const char* subtitle, int percent) {
+    // Chỉ vẽ khi cần — tránh SPI flood
+    tft.fillScreen(OTA_BG);
+
+    // Icon update (hình mũi tên đơn giản)
+    tft.fillCircle(160, 60, 28, OTA_ACCENT);
+    tft.fillCircle(160, 60, 22, OTA_BG);
+    tft.fillTriangle(148, 68, 172, 68, 160, 48, OTA_ACCENT);
+    tft.fillRect(155, 68, 10, 16, OTA_ACCENT);
+
+    // Title
+    tft.setTextSize(2);
+    tft.setTextColor(0xFFFF, OTA_BG);
+    int16_t tw = tft.textWidth(title);
+    tft.setCursor((320 - tw) / 2, 100);
+    tft.print(title);
+
+    // Subtitle
+    tft.setTextSize(1);
+    tft.setTextColor(0x7BEF, OTA_BG);
+    int16_t sw = tft.textWidth(subtitle);
+    tft.setCursor((320 - sw) / 2, 124);
+    tft.print(subtitle);
+
+    // Progress bar background
+    tft.fillRoundRect(20, 148, 280, 18, 4, OTA_BAR_BG);
+
+    if (percent >= 0) {
+        // Progress bar fill
+        int barW = (int)(280.0f * percent / 100.0f);
+        if (barW > 0) {
+            tft.fillRoundRect(20, 148, barW, 18, 4, OTA_BAR_FG);
+        }
+
+        // Phần trăm
+        tft.setTextSize(2);
+        tft.setTextColor(0xFD20, OTA_BG);  // Màu cam
+        char pct[8];
+        snprintf(pct, sizeof(pct), "%d%%", percent);
+        int16_t px = (320 - tft.textWidth(pct)) / 2;
+        tft.fillRect(0, 172, 320, 20, OTA_BG);
+        tft.setCursor(px, 174);
+        tft.print(pct);
+    }
+
+    // Footer hint
+    tft.setTextSize(1);
+    tft.setTextColor(0x528A, OTA_BG);
+    tft.setCursor(10, 210);
+    tft.print("Khong ngat nguon trong khi cap nhat!");
+}
+
+static void _drawOTAResult(bool success, const char* msg) {
+    tft.fillScreen(OTA_BG);
+
+    uint16_t iconColor = success ? OTA_SUCCESS : OTA_ERROR;
+
+    // Vòng tròn kết quả
+    tft.fillCircle(160, 80, 35, iconColor);
+    tft.fillCircle(160, 80, 28, OTA_BG);
+
+    if (success) {
+        // Dấu tick
+        tft.drawLine(145, 80, 155, 92, iconColor);
+        tft.drawLine(145, 81, 155, 93, iconColor);
+        tft.drawLine(155, 92, 178, 66, iconColor);
+        tft.drawLine(155, 93, 178, 67, iconColor);
+    } else {
+        // Dấu X
+        tft.drawLine(148, 68, 172, 92, iconColor);
+        tft.drawLine(149, 68, 173, 92, iconColor);
+        tft.drawLine(172, 68, 148, 92, iconColor);
+        tft.drawLine(173, 68, 149, 92, iconColor);
+    }
+
+    // Status text
+    tft.setTextSize(2);
+    tft.setTextColor(iconColor, OTA_BG);
+    const char* statusText = success ? "THANH CONG!" : "THAT BAI";
+    int16_t tw = tft.textWidth(statusText);
+    tft.setCursor((320 - tw) / 2, 128);
+    tft.print(statusText);
+
+    // Message
+    tft.setTextSize(1);
+    tft.setTextColor(0x7BEF, OTA_BG);
+    int16_t mw = tft.textWidth(msg);
+    tft.setCursor((320 - mw) / 2, 155);
+    tft.print(msg);
+
+    if (success) {
+        tft.setTextColor(0xFD20, OTA_BG);
+        tft.setCursor(60, 178);
+        tft.print("Dang khoi dong lai...");
+    }
+}
+
+// ─────────────────────────────────────────────────────────────
+// Web OTA HTML — Trang upload firmware
+// ─────────────────────────────────────────────────────────────
+static const char OTA_HTML[] PROGMEM = R"rawliteral(
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>OTA Update</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#0a0f1e;color:#fff;font-family:-apple-system,sans-serif;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px}
+  .card{background:#101828;border:1px solid #1e2d45;border-radius:16px;padding:28px 24px;width:100%;max-width:420px}
+  h2{color:#38bdf8;font-size:20px;margin-bottom:4px;text-align:center}
+  .sub{color:#64748b;font-size:13px;text-align:center;margin-bottom:24px}
+  .dropzone{border:2px dashed #1e4d6b;border-radius:12px;padding:32px 20px;text-align:center;cursor:pointer;transition:.2s;background:#0d1926}
+  .dropzone:hover,.dropzone.drag{border-color:#38bdf8;background:#0f2133}
+  .dropzone input{display:none}
+  .dropzone .icon{font-size:36px;margin-bottom:8px}
+  .dropzone p{color:#94a3b8;font-size:13px}
+  .dropzone .fname{color:#38bdf8;font-size:14px;font-weight:600;margin-top:8px;word-break:break-all}
+  .btn{display:block;width:100%;padding:13px;border:none;border-radius:10px;font-size:15px;font-weight:700;cursor:pointer;margin-top:16px;transition:.15s}
+  .btn-upload{background:#0ea5e9;color:#fff}
+  .btn-upload:hover:not(:disabled){background:#0284c7}
+  .btn-upload:disabled{background:#1e3a4a;color:#64748b;cursor:default}
+  .progress-wrap{margin-top:16px;display:none}
+  .progress-bar{height:10px;background:#1e2d45;border-radius:5px;overflow:hidden}
+  .progress-fill{height:100%;background:linear-gradient(90deg,#0ea5e9,#38bdf8);width:0%;transition:width .3s;border-radius:5px}
+  .progress-pct{text-align:center;color:#38bdf8;font-size:15px;font-weight:700;margin-top:6px}
+  .msg{padding:12px 16px;border-radius:10px;margin-top:14px;font-size:13px;display:none}
+  .msg-ok{background:#0d2e1a;border:1px solid #16a34a;color:#4ade80}
+  .msg-err{background:#2d0d0d;border:1px solid #dc2626;color:#f87171}
+  .info{margin-top:18px;border-top:1px solid #1e2d45;padding-top:14px}
+  .info-row{display:flex;justify-content:space-between;font-size:12px;color:#64748b;padding:3px 0}
+  .info-row span:last-child{color:#94a3b8}
+  .warn{background:#1a1200;border:1px solid #854d0e;color:#fbbf24;border-radius:8px;padding:10px 14px;font-size:12px;margin-top:14px}
+</style>
+</head>
+<body>
+<div class="card">
+  <h2>⬆ OTA Firmware Update</h2>
+  <p class="sub" id="did">Đang tải thông tin thiết bị...</p>
+
+  <div class="dropzone" id="dz" onclick="document.getElementById('fInput').click()">
+    <input type="file" id="fInput" accept=".bin">
+    <div class="icon">📦</div>
+    <p>Nhấn hoặc kéo thả file <strong>.bin</strong> vào đây</p>
+    <p class="fname" id="fname"></p>
+  </div>
+
+  <button class="btn btn-upload" id="btnUp" disabled onclick="startUpload()">⬆ NẠP FIRMWARE</button>
+
+  <div class="progress-wrap" id="progWrap">
+    <div class="progress-bar"><div class="progress-fill" id="progFill"></div></div>
+    <div class="progress-pct" id="progPct">0%</div>
+  </div>
+
+  <div class="msg msg-ok" id="msgOk">✅ Cập nhật thành công! ESP32 đang khởi động lại...</div>
+  <div class="msg msg-err" id="msgErr">❌ <span id="errTxt">Lỗi không xác định</span></div>
+
+  <div class="warn">⚠️ Không ngắt nguồn trong khi đang nạp firmware!</div>
+
+  <div class="info">
+    <div class="info-row"><span>Device ID</span><span id="iId">—</span></div>
+    <div class="info-row"><span>Chip Model</span><span id="iChip">ESP32</span></div>
+    <div class="info-row"><span>Free Heap</span><span id="iHeap">—</span></div>
+    <div class="info-row"><span>Flash Size</span><span id="iFlash">—</span></div>
+    <div class="info-row"><span>Sketch Size</span><span id="iSketch">—</span></div>
+  </div>
+</div>
+
+<script>
+var selFile = null;
+
+// Load device info
+fetch('/ota/info',{signal:AbortSignal.timeout(4000)})
+  .then(function(r){return r.json();})
+  .then(function(d){
+    document.getElementById('did').textContent = 'NODE: ' + (d.deviceId||'—') + ' · ' + (d.mode||'') + ' mode';
+    document.getElementById('iId').textContent = d.deviceId||'—';
+    document.getElementById('iHeap').textContent = d.freeHeap ? Math.round(d.freeHeap/1024)+'KB' : '—';
+    document.getElementById('iFlash').textContent = d.flashSize ? Math.round(d.flashSize/1024/1024)+'MB' : '—';
+    document.getElementById('iSketch').textContent = d.sketchSize ? Math.round(d.sketchSize/1024)+'KB / '+Math.round(d.sketchFree/1024)+'KB free' : '—';
+  }).catch(function(){});
+
+// Drag & drop
+var dz = document.getElementById('dz');
+dz.addEventListener('dragover',function(e){e.preventDefault();dz.classList.add('drag');});
+dz.addEventListener('dragleave',function(){dz.classList.remove('drag');});
+dz.addEventListener('drop',function(e){
+  e.preventDefault(); dz.classList.remove('drag');
+  var f = e.dataTransfer.files[0];
+  if(f) setFile(f);
+});
+
+document.getElementById('fInput').addEventListener('change',function(){
+  if(this.files[0]) setFile(this.files[0]);
+});
+
+function setFile(f) {
+  if(!f.name.endsWith('.bin')){
+    showErr('Chỉ chấp nhận file .bin từ PlatformIO!'); return;
+  }
+  selFile = f;
+  document.getElementById('fname').textContent = '📄 '+f.name+' ('+Math.round(f.size/1024)+' KB)';
+  document.getElementById('btnUp').disabled = false;
+  hide('msgOk'); hide('msgErr');
+}
+
+function startUpload() {
+  if(!selFile) return;
+  var btn = document.getElementById('btnUp');
+  btn.disabled = true;
+  show('progWrap');
+  hide('msgOk'); hide('msgErr');
+
+  var xhr = new XMLHttpRequest();
+  xhr.upload.addEventListener('progress',function(e){
+    if(e.lengthComputable){
+      var pct = Math.round(e.loaded/e.total*100);
+      document.getElementById('progFill').style.width = pct+'%';
+      document.getElementById('progPct').textContent = pct+'%';
+    }
+  });
+  xhr.addEventListener('load',function(){
+    if(xhr.status===200){
+      show('msgOk');
+      document.getElementById('progFill').style.background='#16a34a';
+    } else {
+      showErr('Server lỗi: HTTP '+xhr.status+' — '+xhr.responseText);
+      btn.disabled=false;
+    }
+  });
+  xhr.addEventListener('error',function(){
+    showErr('Mất kết nối — có thể ESP32 đã restart thành công');
+    btn.disabled=false;
+  });
+  xhr.addEventListener('timeout',function(){
+    showErr('Timeout — kiểm tra ESP32 đã khởi động lại chưa');
+    btn.disabled=false;
+  });
+  xhr.timeout = 60000;  // 60 giây timeout
+
+  var fd = new FormData();
+  fd.append('firmware', selFile, selFile.name);
+  xhr.open('POST', '/ota/upload');
+  xhr.send(fd);
+}
+
+function show(id){ document.getElementById(id).style.display='block'; }
+function hide(id){ document.getElementById(id).style.display='none'; }
+function showErr(msg){
+  document.getElementById('errTxt').textContent=msg;
+  show('msgErr');
+}
+</script>
+</body>
+</html>
+)rawliteral";
+
+// ─────────────────────────────────────────────────────────────
+// Handler: GET /ota — trang upload
+// ─────────────────────────────────────────────────────────────
+static void handleOTAPage() {
+    server.sendHeader("Cache-Control", "no-store");
+    server.send_P(200, "text/html", OTA_HTML);
+}
+
+// ─────────────────────────────────────────────────────────────
+// Handler: GET /ota/info — thông tin thiết bị cho trang OTA
+// ─────────────────────────────────────────────────────────────
+static void handleOTAInfo() {
+    String mode = "offline";
+    // Kiểm tra WiFi STA để xác định mode
+    if (WiFi.status() == WL_CONNECTED) mode = "online";
+
+    String json = "{";
+    json += "\"deviceId\":\"" + deviceId + "\",";
+    json += "\"mode\":\"" + mode + "\",";
+    json += "\"freeHeap\":" + String(ESP.getFreeHeap()) + ",";
+    json += "\"flashSize\":" + String(ESP.getFlashChipSize()) + ",";
+    json += "\"sketchSize\":" + String(ESP.getSketchSize()) + ",";
+    json += "\"sketchFree\":" + String(ESP.getFreeSketchSpace());
+    json += "}";
+
+    server.sendHeader("Cache-Control", "no-cache");
+    server.send(200, "application/json", json);
+}
+
+// ─────────────────────────────────────────────────────────────
+// Handler: POST /ota/upload — nhận và flash firmware
+//
+// ĐÂY LÀ HANDLER QUAN TRỌNG NHẤT — Được gọi 2 lần bởi WebServer:
+//   1. Khi data chunk đến → ghi vào flash
+//   2. Khi upload hoàn tất → gửi response
+// ─────────────────────────────────────────────────────────────
+static void handleOTAUpload() {
+    // Lần gọi cuối — sau khi upload xong, gửi response
+    if (Update.hasError()) {
+        String errMsg = Update.errorString();
+        Serial.println("[OTA] Thất bại: " + errMsg);
+        _drawOTAResult(false, errMsg.c_str());
+        server.send(500, "text/plain", "OTA FAILED: " + errMsg);
+    } else {
+        Serial.println(F("[OTA] Flash thành công — chuẩn bị restart"));
+        _drawOTAResult(true, "Phien ban moi da duoc cai dat");
+        server.send(200, "text/plain", "OK");
+        server.client().flush();
+        delay(1500);
+        ESP.restart();
+    }
+    _otaInProgress = false;
+}
+
+static void handleOTAUploadData() {
+    // Gọi mỗi khi có chunk data đến trong quá trình upload
+    HTTPUpload& upload = server.upload();
+
+    if (upload.status == UPLOAD_FILE_START) {
+        Serial.printf("[OTA] Bắt đầu: %s (size chưa rõ)\n", upload.filename.c_str());
+        _otaInProgress = true;
+
+        // Tính space trống cho firmware
+        uint32_t maxSketchSpace = (ESP.getFreeSketchSpace() - 0x1000) & 0xFFFFF000;
+
+        if (!Update.begin(maxSketchSpace, U_FLASH)) {
+            Serial.println("[OTA] Lỗi begin: " + String(Update.errorString()));
+            _drawOTAScreen("OTA FAILED", Update.errorString(), -1);
+            return;
+        }
+
+        _drawOTAScreen("Cap nhat firmware", "Dang ghi vao flash...", 0);
+        Serial.println(F("[OTA] Update.begin() OK — đang nhận dữ liệu..."));
+
+    } else if (upload.status == UPLOAD_FILE_WRITE) {
+        // Ghi chunk vào flash
+        if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
+            Serial.println("[OTA] Lỗi write: " + String(Update.errorString()));
+            return;
+        }
+
+        // Tính progress dùng Update.progress() / Update.size()
+        // ESP32 HTTPUpload KHÔNG có remainingSize (field đó chỉ có trên ESP8266)
+        // Update.progress() = bytes đã ghi vào flash (chính xác nhất)
+        // Update.size()     = tổng size được khai báo lúc Update.begin()
+        {
+            uint32_t written = Update.progress();
+            uint32_t total   = Update.size();
+            int pct = (total > 0) ? (int)(100.0f * written / total) : 0;
+
+            // Chỉ vẽ khi % thay đổi (bước 2%) để tránh SPI flood
+            static int _lastPct = -1;
+            if (pct != _lastPct && pct % 2 == 0) {
+                _lastPct = pct;
+                _drawOTAScreen("Cap nhat firmware", "Dang ghi vao flash...", pct);
+            }
+        }
+
+    } else if (upload.status == UPLOAD_FILE_END) {
+        if (Update.end(true)) {
+            Serial.printf("[OTA] Hoàn tất: %u bytes → OK\n", upload.totalSize);
+            _drawOTAScreen("Cap nhat firmware", "Flash thanh cong!", 100);
+        } else {
+            Serial.println("[OTA] Lỗi end: " + String(Update.errorString()));
+        }
+
+    } else if (upload.status == UPLOAD_FILE_ABORTED) {
+        Update.abort();
+        _otaInProgress = false;
+        Serial.println(F("[OTA] Upload bị hủy"));
+        _drawOTAResult(false, "Upload bi huy");
+    }
+}
+
+// ─────────────────────────────────────────────────────────────
+// ArduinoOTA setup — chỉ gọi 1 lần khi WiFi STA connected
+// ─────────────────────────────────────────────────────────────
+static void _setupArduinoOTA() {
+    if (_arduinoOTASetup) return;
+
+    // Hostname: <deviceId>.local → flash bằng lệnh:
+    // pio run -t upload --upload-port <deviceId>.local
+    ArduinoOTA.setHostname(deviceId.c_str());
+    ArduinoOTA.setPassword(OTA_PASSWORD);
+
+    ArduinoOTA.onStart([]() {
+        String type = ArduinoOTA.getCommand() == U_FLASH ? "firmware" : "filesystem";
+        Serial.println("[ArduinoOTA] Bắt đầu cập nhật: " + type);
+        _otaInProgress = true;
+        _drawOTAScreen("ArduinoOTA", ("Cap nhat " + type).c_str(), 0);
+    });
+
+    ArduinoOTA.onEnd([]() {
+        Serial.println(F("\n[ArduinoOTA] Hoàn tất → Restart"));
+        _drawOTAResult(true, "Khoi dong lai...");
+        _otaInProgress = false;
+    });
+
+    ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+        int pct = (int)(100.0f * progress / total);
+        static int _lastPct = -1;
+        if (pct != _lastPct && pct % 5 == 0) {
+            _lastPct = pct;
+            Serial.printf("[ArduinoOTA] %d%%\n", pct);
+            _drawOTAScreen("ArduinoOTA", "Dang nhan du lieu...", pct);
+        }
+    });
+
+    ArduinoOTA.onError([](ota_error_t error) {
+        const char* errMsg;
+        switch (error) {
+            case OTA_AUTH_ERROR:    errMsg = "Sai mat khau"; break;
+            case OTA_BEGIN_ERROR:   errMsg = "Loi Begin";    break;
+            case OTA_CONNECT_ERROR: errMsg = "Loi Connect";  break;
+            case OTA_RECEIVE_ERROR: errMsg = "Loi Receive";  break;
+            case OTA_END_ERROR:     errMsg = "Loi End";      break;
+            default:                errMsg = "Loi khong xac dinh";
+        }
+        Serial.printf("[ArduinoOTA] Lỗi [%u]: %s\n", error, errMsg);
+        _drawOTAResult(false, errMsg);
+        _otaInProgress = false;
+    });
+
+    ArduinoOTA.begin();
+    _arduinoOTASetup = true;
+    Serial.printf("[OTA] ArduinoOTA sẵn sàng: %s.local | pass: %s\n",
+                  deviceId.c_str(), OTA_PASSWORD);
+}
+
+// ─────────────────────────────────────────────────────────────
+// Public API
+// ─────────────────────────────────────────────────────────────
+
+// Gọi trong onlineStart() — đăng ký HTTP routes (hoạt động cả OFFLINE lẫn ONLINE)
+void otaSetupRoutes() {
+    server.on("/ota", HTTP_GET, handleOTAPage);
+    server.on("/ota/info", HTTP_GET, handleOTAInfo);
+    server.on("/ota/upload", HTTP_POST, handleOTAUpload, handleOTAUploadData);
+    Serial.println(F("[OTA] Web OTA route sẵn sàng tại /ota"));
+}
+
+// Gọi trong onlineLoop() — handle ArduinoOTA (mDNS)
+void otaLoop() {
+    // Khởi tạo ArduinoOTA lần đầu khi WiFi STA kết nối thành công
+    if (!_arduinoOTASetup && WiFi.status() == WL_CONNECTED) {
+        _setupArduinoOTA();
+    }
+
+    // Handle ArduinoOTA events
+    if (_arduinoOTASetup) {
+        ArduinoOTA.handle();
+    }
+}

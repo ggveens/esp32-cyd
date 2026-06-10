@@ -8,7 +8,9 @@
 
 // ---- Trạng thái đồng bộ ----
 extern volatile bool timeSyncSuccess;     // Đã đồng bộ thành công ít nhất một lần
+extern volatile bool dateUpdatePending;   // ◄ THÊM MỚI: Cờ báo hiệu có dữ liệu ngày mới từ API
 extern String lunarDate;                  // Ngày âm lịch từ API (vd: "21/04/2026")
+extern String solarDate;                  // Ngày dương lịch từ API (vd: "08/06/2026")
 extern String lastApiError;               // Chuỗi lỗi cuối cùng để hiển thị lên UI
 
 // ---- Mutex bảo vệ dữ liệu dùng chung ----

@@ -5,11 +5,10 @@
 #include "../clock/time_manager.h"
 #include "../wifi/wifi_manager.h"
 #include <TFT_eSPI.h>
-// XPT2046_Touchscreen removed — use tft.getTouch() built-in
 #include <WiFi.h>
 #include <time.h> 
 
-// 🎨 Palette (Giữ nguyên cấu trúc màu sắc của bạn)
+// 🎨 Palette màu sắc
 #define BG_COLOR       0x0841
 #define CARD_COLOR     0x1082
 #define BORDER_COLOR   0x2104
@@ -19,7 +18,10 @@
 #define TIME_COLOR     0xFD20
 #define TIME_WAIT_COLOR 0x7BEF  
 
-// ===== HEADER ===== (Giữ nguyên)
+// Mảng chuyển đổi Thứ tự hệ thống sang Tiếng Anh (Tránh lỗi Font tiếng Việt)
+const char* dayNames[] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
+
+// ===== HEADER ===== 
 void drawHeader() {
   tft.fillRect(0, 0, 320, 40, BG_COLOR);
   tft.drawFastHLine(0, 39, 320, BORDER_COLOR);
@@ -40,10 +42,9 @@ void drawHeader() {
   tft.setTextColor(TEXT_PRIMARY, BG_COLOR);
   tft.print(WiFi.softAPIP());
 
-  // Dòng 2: Trạng thái WiFi rõ ràng
+  // Trạng thái WiFi
   if (isAPOnlyMode) {
-    // *** Hiển thị nổi bật khi offline ***
-    tft.setTextColor(0xFD20, BG_COLOR); // Màu vàng cảnh báo
+    tft.setTextColor(0xFD20, BG_COLOR); 
     tft.setCursor(5, 22);
     tft.print("[OFFLINE] AP-Only");
   } else if (WiFi.status() == WL_CONNECTED) {
@@ -71,30 +72,25 @@ void drawTime() {
   static int lastSec = -1;
 
   if (!isTimeSynced()) {
-    // ✅ FIX #3a: Khi OFFLINE, lastApiError = "" (sau fix #2)
-    //    → Xóa vùng đồng hồ và KHÔNG in bất kỳ chữ nào
-    //    Khi ONLINE chưa sync, lastApiError có nội dung → hiển thị trạng thái
     String msg = getLastApiError();
     if (msg.isEmpty()) {
-      // OFFLINE hoàn toàn — chỉ xóa vùng, không in gì
       static bool _areaCleaned = false;
       if (!_areaCleaned) {
-        tft.fillRect(0, 50, 320, 45, BG_COLOR);
+        tft.fillRect(0, 42, 320, 65, BG_COLOR); // Xóa sạch vùng chứa giờ lớn
         _areaCleaned = true;
       }
       return;
     }
-    // ONLINE đang chờ sync — hiển thị trạng thái
     static bool _areaCleaned = false;
-    _areaCleaned = false;  // Reset để lần sau khi quay OFFLINE sẽ xóa lại
+    _areaCleaned = false;
     static unsigned long lastWaitMsg = 0;
     if (millis() - lastWaitMsg > 1000) {
       lastWaitMsg = millis();
       tft.setTextSize(2);
       int16_t x = (320 - tft.textWidth(msg)) / 2;
       tft.setTextColor(TIME_WAIT_COLOR, BG_COLOR);
-      tft.fillRect(0, 50, 320, 45, BG_COLOR);
-      tft.setCursor(x, 58);
+      tft.fillRect(0, 42, 320, 65, BG_COLOR);
+      tft.setCursor(x, 65);
       tft.print(msg);
     }
     return;
@@ -106,43 +102,58 @@ void drawTime() {
   if (timeinfo.tm_sec == lastSec) return;
   lastSec = timeinfo.tm_sec;
 
-  // Giờ
+  // 1. In dòng THỨ (Day of Week) - Căn chỉnh Y = 45
+  tft.setTextSize(1);
+  tft.setTextColor(TEXT_SECONDARY, BG_COLOR);
+  String dayStr = String(dayNames[timeinfo.tm_wday]);
+  int16_t dayX = (320 - tft.textWidth(dayStr)) / 2;
+  tft.fillRect(0, 43, 320, 10, BG_COLOR); // Xóa quét dòng nhỏ tránh bóng chữ
+  tft.setCursor(dayX, 44);
+  tft.print(dayStr);
+
+  // 2. In dòng GIỜ : PHÚT : GIÂY - Hạ trục Y = 56, chiều cao chữ cỡ 3 là 24px
   char timeStr[9];
   strftime(timeStr, sizeof(timeStr), "%H:%M:%S", &timeinfo);
   tft.setTextSize(3);
   int16_t timeX = (320 - tft.textWidth(timeStr)) / 2;
   tft.setTextColor(TIME_COLOR, BG_COLOR);
-  tft.fillRect(0, 50, 320, 30, BG_COLOR);
-  tft.setCursor(timeX, 52);
+  tft.fillRect(0, 55, 320, 25, BG_COLOR); 
+  tft.setCursor(timeX, 56);
   tft.print(timeStr);
 
-  // Ngày âm lịch (cập nhật khi sang ngày mới)
+  // 3. Ngày Âm lịch & Dương lịch - Hạ trục Y = 86
   static int lastDay = -1;
-  if (timeinfo.tm_mday != lastDay) {
+  if (timeinfo.tm_mday != lastDay || dateUpdatePending) {
     lastDay = timeinfo.tm_mday;
+    dateUpdatePending = false; 
+    
     tft.setTextSize(1);
-    tft.fillRect(0, 82, 320, 18, BG_COLOR);
+    tft.fillRect(0, 84, 320, 15, BG_COLOR);
     
     String lunar;
+    String solar;
     if (xSemaphoreTake(timeDataMutex, pdMS_TO_TICKS(10))) {
       lunar = lunarDate;
+      solar = solarDate; 
       xSemaphoreGive(timeDataMutex);
     } else {
       lunar = "???";
+      solar = "???";
     }
-    String displayDate = "AL: " + lunar;
+    
+    String displayDate = "AL:" + lunar + " | DL:" + solar;
     int16_t dateX = (320 - tft.textWidth(displayDate)) / 2;
     tft.setTextColor(TEXT_SECONDARY, BG_COLOR);
-    tft.setCursor(dateX, 85);
+    tft.setCursor(dateX, 86);
     tft.print(displayDate);
   }
 }
 
-// ===== RELAY CARD ===== (Giữ nguyên)
+// ===== RELAY CARD ===== 
 void drawRelayCompact(int y, const char* name, const char* pin, bool state) {
   int x = 10;
   int w = 300;
-  int h = 38;
+  int h = 38; // Chiều cao mỗi thẻ rút gọn xuống còn 38px
   uint16_t border = state ? 0x07E0 : 0xF800;
 
   tft.fillRoundRect(x, y, w, h, 6, CARD_COLOR);
@@ -150,11 +161,11 @@ void drawRelayCompact(int y, const char* name, const char* pin, bool state) {
   tft.fillCircle(x + 15, y + h / 2, 5, border);
 
   tft.setTextColor(TEXT_PRIMARY, CARD_COLOR);
-  tft.setCursor(x + 28, y + 10);
+  tft.setCursor(x + 28, y + 8);
   tft.print(name);
 
   tft.setTextColor(TEXT_SECONDARY, CARD_COLOR);
-  tft.setCursor(x + 28, y + 24);
+  tft.setCursor(x + 28, y + 22);
   tft.print(pin);
 
   uint16_t btnColor  = state ? 0x07E0 : 0xF800;
@@ -172,24 +183,25 @@ void drawRelayCompact(int y, const char* name, const char* pin, bool state) {
 
 void drawRelays() {
   tft.setTextSize(1);
-  drawRelayCompact(100, "DISPLAY", "GPIO27", state1);
-  drawRelayCompact(145, "RELAY 2", "GPIO22", state2);
-  drawRelayCompact(190, "RELAY 3", "GPIO21", state3);
+  // ◄ TOẠ ĐỘ TRỤC Y ĐƯỢC TÍNH TOÁN LẠI ĐỂ KHÔNG BỊ CHÈN HOẶC MẤT TRÊN MÀN HÌNH 240px
+  drawRelayCompact(106, "DISPLAY", "GPIO27", state1);
+  drawRelayCompact(150, "RELAY 2", "GPIO22", state2);
+  drawRelayCompact(194, "RELAY 3", "GPIO21", state3);
 }
 
-// ===== FOOTER ===== (Giữ nguyên)
+// ===== FOOTER ===== 
 void drawFooter() {
   tft.setTextSize(1);
-  tft.fillRect(0, 240, 320, 40, BG_COLOR);
+  tft.fillRect(0, 240, 320, 40, BG_COLOR); // Vẽ bắt đầu từ 240 trở xuống vùng viền dưới màn hình
   tft.drawFastHLine(0, 240, 320, BORDER_COLOR);
 
   tft.setTextColor(TEXT_SECONDARY, BG_COLOR);
-  tft.setCursor(10, 250);
+  tft.setCursor(10, 246);
   tft.print("MQTT:");
   tft.setTextColor(client.connected() ? 0x07E0 : 0xF800, BG_COLOR);
   tft.print(client.connected() ? " ON" : " OFF");
 
-  tft.setCursor(150, 250);
+  tft.setCursor(150, 246);
   tft.setTextColor(TEXT_SECONDARY, BG_COLOR);
   tft.print("RSSI:");
   tft.setTextColor(TEXT_PRIMARY, BG_COLOR);
@@ -199,7 +211,7 @@ void drawFooter() {
     tft.print("--");
   }
 
-  tft.setCursor(10, 265);
+  tft.setCursor(10, 260);
   tft.setTextColor(TEXT_SECONDARY, BG_COLOR);
   tft.print("UP:");
   unsigned long up = millis() / 1000;

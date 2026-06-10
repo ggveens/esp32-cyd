@@ -45,3 +45,7 @@
 #define TIME_API_URL         "https://ggveens.org/api/today/datetime"
 #define TIME_SYNC_INTERVAL   3600000   // Đồng bộ lại sau 1 tiếng (ms)
 #define TIME_RETRY_INTERVAL  15000     // Thử lại khi lỗi (ms)
+
+// ===== OTA =====
+// Mật khẩu cho ArduinoOTA (upload từ PlatformIO/IDE)
+// Web OTA (/ota) không yêu cầu mật khẩu — chỉ cần kết nối AP

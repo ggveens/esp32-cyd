@@ -1,0 +1,22 @@
+// ota_manager.h — OTA Update Manager
+// ═══════════════════════════════════════════════════════════════
+// Cho phép nạp firmware mới qua WiFi (không cần cắm USB)
+// Chỉ hoạt động khi ONLINE + WiFi STA đã kết nối
+//
+// Cách sử dụng:
+//   - Truy cập http://<STA_IP>/ota hoặc http://192.168.4.1/ota
+//   - Upload file .bin từ PlatformIO: Project Tasks → Upload File System Image
+//     hoặc dùng giao diện web tích hợp
+//   - TFT hiển thị progress bar trong quá trình flash
+// ═══════════════════════════════════════════════════════════════
+#pragma once
+#include <Arduino.h>
+
+// Gọi 1 lần trong onlineStart() để đăng ký route /ota
+void otaSetupRoutes();
+
+// Gọi trong onlineLoop() để handle ArduinoOTA (mDNS-based)
+void otaLoop();
+
+// Trả về true nếu đang trong quá trình OTA (để tạm dừng các tác vụ khác)
+bool isOTAInProgress();

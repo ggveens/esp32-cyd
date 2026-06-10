@@ -1,10 +1,4 @@
 // src/clock/time_manager.cpp
-// Time Manager — chỉ sống khi ONLINE
-//   timeManagerSetup()   → gọi trong setup(), tạo mutex, KHÔNG tạo task
-//   timeManagerResume()  → ONLINE: tạo FreeRTOS task trên Core 0
-//   timeManagerSuspend() → OFFLINE: xóa task (vTaskDelete), ngừng mọi HTTP
-// ─────────────────────────────────────────────────────────────────────────
-
 #include "time_manager.h"
 #include "../core/globals.h"
 #include "../config.h"
@@ -14,17 +8,15 @@
 #include <sys/time.h>
 
 // ---- Biến toàn cục ----
-volatile bool     timeSyncSuccess = false;
-String            lunarDate       = "";
-String            lastApiError    = "Chưa khởi động";
-SemaphoreHandle_t timeDataMutex   = nullptr;
+volatile bool     timeSyncSuccess   = false;
+volatile bool     dateUpdatePending = false; 
+String            lunarDate         = "";
+String            solarDate         = ""; 
+String            lastApiError      = "Chưa khởi động";
+SemaphoreHandle_t timeDataMutex     = nullptr;
 
-// ---- Task handle — cần để xóa task khi Offline ----
 static TaskHandle_t _timeSyncTaskHandle = nullptr;
 
-// ─────────────────────────────────────────────────────────────
-// Hàm thread-safe
-// ─────────────────────────────────────────────────────────────
 bool isTimeSynced() {
     bool ret = false;
     if (xSemaphoreTake(timeDataMutex, pdMS_TO_TICKS(10))) {
@@ -45,9 +37,6 @@ String getLastApiError() {
     return err;
 }
 
-// ─────────────────────────────────────────────────────────────
-// Gọi API và set đồng hồ hệ thống
-// ─────────────────────────────────────────────────────────────
 static bool fetchTimeFromAPI() {
     if (WiFi.status() != WL_CONNECTED) return false;
 
@@ -87,13 +76,13 @@ static bool fetchTimeFromAPI() {
         return false;
     }
 
-    String lunar     = doc["lunar"]["full_date"].as<String>();
-    String solarTime = doc["solar"]["time"].as<String>();      // "HH:MM:SS"
-    String solarDate = doc["solar"]["full_date"].as<String>(); // "DD/MM/YYYY"
+    String lunar        = doc["lunar"]["full_date"].as<String>();
+    String solarTime    = doc["solar"]["time"].as<String>();      
+    String solarDateApi = doc["solar"]["full_date"].as<String>(); 
 
     int h, m, s, day, month, year;
     if (sscanf(solarTime.c_str(), "%d:%d:%d", &h, &m, &s) != 3 ||
-        sscanf(solarDate.c_str(), "%d/%d/%d", &day, &month, &year) != 3) {
+        sscanf(solarDateApi.c_str(), "%d/%d/%d", &day, &month, &year) != 3) {
         if (xSemaphoreTake(timeDataMutex, portMAX_DELAY)) {
             lastApiError = "Sai định dạng ngày/giờ từ API";
             xSemaphoreGive(timeDataMutex);
@@ -114,7 +103,11 @@ static bool fetchTimeFromAPI() {
     settimeofday(&now_tv, nullptr);
 
     if (xSemaphoreTake(timeDataMutex, portMAX_DELAY)) {
+        if (lunarDate != lunar || solarDate != solarDateApi) {
+            dateUpdatePending = true; 
+        }
         lunarDate       = lunar;
+        solarDate       = solarDateApi; 
         timeSyncSuccess = true;
         lastApiError    = "";
         xSemaphoreGive(timeDataMutex);
@@ -124,20 +117,54 @@ static bool fetchTimeFromAPI() {
     return true;
 }
 
-// ─────────────────────────────────────────────────────────────
-// FreeRTOS Task — chỉ tồn tại khi ONLINE
-// ─────────────────────────────────────────────────────────────
+// ---- FreeRTOS Task nâng cấp kiểm tra mốc 00:00:00 ----
 static void timeSyncTask(void* parameter) {
-    vTaskDelay(pdMS_TO_TICKS(2000));  // Chờ WiFi ổn định
+    vTaskDelay(pdMS_TO_TICKS(2000));  // Chờ ổn định ban đầu
+    
+    unsigned long lastPeriodicSync = 0;
+    bool forceMidnightSync = true; // Cho phép chạy ngay lần đầu tiên khởi động
 
     while (true) {
+        unsigned long currentMillis = millis();
+        bool needSync = false;
+
         if (WiFi.status() == WL_CONNECTED) {
-            if (!fetchTimeFromAPI()) {
-                vTaskDelay(pdMS_TO_TICKS(TIME_RETRY_INTERVAL));
-            } else {
-                vTaskDelay(pdMS_TO_TICKS(TIME_SYNC_INTERVAL));
+            // Điều kiện 1: Đồng bộ định kỳ theo cấu hình (ví dụ: mỗi 1 tiếng)
+            if (lastPeriodicSync == 0 || (currentMillis - lastPeriodicSync >= TIME_SYNC_INTERVAL)) {
+                needSync = true;
             }
+
+            // Điều kiện 2: Kiểm tra xem đồng hồ nội bộ có chạm mốc sang ngày mới (00 giờ 00 phút) hay không
+            struct tm timeinfo;
+            if (getLocalTime(&timeinfo, 0)) {
+                if (timeinfo.tm_hour == 0 && timeinfo.tm_min == 0) {
+                    if (forceMidnightSync) {
+                        Serial.println(F("[TimeTask] Kích hoạt đồng bộ khẩn cấp lúc nửa đêm (00:00)!"));
+                        needSync = true;
+                        forceMidnightSync = false; // Tắt cờ tạm thời để không gọi liên tục trong phút đó
+                    }
+                } else {
+                    // Khi thời gian thoát khỏi mốc 00:00, Reset lại cờ để chuẩn bị cho ngày kế tiếp
+                    forceMidnightSync = true;
+                }
+            }
+
+            // Thực thi xử lý gọi API
+            if (needSync) {
+                if (!fetchTimeFromAPI()) {
+                    // Nếu lỗi mạng, hẹn thử lại sau 15 giây
+                    vTaskDelay(pdMS_TO_TICKS(TIME_RETRY_INTERVAL));
+                    continue;
+                } else {
+                    // Nếu thành công, cập nhật mốc thời gian định kỳ gần nhất
+                    lastPeriodicSync = millis();
+                }
+            }
+            
+            // Quét kiểm tra trạng thái mốc thời gian mịn mỗi 1 giây
+            vTaskDelay(pdMS_TO_TICKS(1000));
         } else {
+            // Khi không kết nối mạng
             if (xSemaphoreTake(timeDataMutex, portMAX_DELAY)) {
                 lastApiError = "Mất mạng";
                 xSemaphoreGive(timeDataMutex);
@@ -147,68 +174,32 @@ static void timeSyncTask(void* parameter) {
     }
 }
 
-// ─────────────────────────────────────────────────────────────
-// API công khai
-// ─────────────────────────────────────────────────────────────
-
-// Gọi 1 lần trong setup() — chỉ tạo mutex, KHÔNG tạo task
 void timeManagerSetup() {
     if (timeDataMutex == nullptr) {
         timeDataMutex = xSemaphoreCreateMutex();
-        if (timeDataMutex == nullptr) {
-            Serial.println(F("[TimeManager] Lỗi tạo mutex!"));
-            return;
-        }
     }
-    Serial.println(F("[TimeManager] Mutex sẵn sàng. Task chưa chạy (chờ ONLINE)."));
 }
 
-// ONLINE: tạo task nếu chưa có
 void timeManagerResume() {
-    if (_timeSyncTaskHandle != nullptr) {
-        Serial.println(F("[TimeManager] Task đã tồn tại, bỏ qua."));
-        return;
-    }
-
+    if (_timeSyncTaskHandle != nullptr) return;
     if (timeDataMutex == nullptr) timeManagerSetup();
 
-    // Reset trạng thái lỗi
     if (xSemaphoreTake(timeDataMutex, portMAX_DELAY)) {
         lastApiError = "Đang kết nối...";
         xSemaphoreGive(timeDataMutex);
     }
 
-    xTaskCreatePinnedToCore(
-        timeSyncTask,          // Hàm task
-        "TimeSync",            // Tên
-        6144,                  // Stack
-        nullptr,               // Tham số
-        1,                     // Ưu tiên
-        &_timeSyncTaskHandle,  // ← Lưu handle để xóa được
-        0                      // Core 0
-    );
-
-    Serial.println(F("[TimeManager] Task TimeSync đã tạo trên Core 0."));
+    xTaskCreatePinnedToCore(timeSyncTask, "TimeSync", 6144, nullptr, 1, &_timeSyncTaskHandle, 0);
 }
 
-// OFFLINE: xóa task, không còn HTTP nào
-// ✅ FIX #2: Luôn reset lastApiError dù task có hay không
-//    Nếu không làm vậy, sau power-cycle khi boot thẳng vào OFFLINE,
-//    lastApiError vẫn là "Chưa khởi động" (giá trị khởi tạo) → TFT hiển thị sai
 void timeManagerSuspend() {
     if (_timeSyncTaskHandle != nullptr) {
-        vTaskDelete(_timeSyncTaskHandle);   // Giải phóng stack & xóa task khỏi scheduler
+        vTaskDelete(_timeSyncTaskHandle);
         _timeSyncTaskHandle = nullptr;
-        Serial.println(F("[TimeManager] Task TimeSync đã xóa (OFFLINE)."));
-    } else {
-        Serial.println(F("[TimeManager] Không có task — chỉ reset trạng thái."));
     }
-
-    // ✅ LUÔN reset — kể cả khi không có task (boot lần đầu vào OFFLINE)
-    if (timeDataMutex != nullptr &&
-        xSemaphoreTake(timeDataMutex, pdMS_TO_TICKS(100))) {
-        lastApiError    = "";          // Xóa thông báo lỗi — OFFLINE không cần hiện gì
-        timeSyncSuccess = false;       // Không có đồng hồ thật → drawTime() ẩn đồng hồ
+    if (timeDataMutex != nullptr && xSemaphoreTake(timeDataMutex, pdMS_TO_TICKS(100))) {
+        lastApiError    = "";
+        timeSyncSuccess = false;
         xSemaphoreGive(timeDataMutex);
     }
 }
