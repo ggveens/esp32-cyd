@@ -49,3 +49,4 @@
 // ===== OTA =====
 // Mật khẩu cho ArduinoOTA (upload từ PlatformIO/IDE)
 // Web OTA (/ota) không yêu cầu mật khẩu — chỉ cần kết nối AP
+#define REMOTE_API_BASE_URL  "https://ggveens.org"   

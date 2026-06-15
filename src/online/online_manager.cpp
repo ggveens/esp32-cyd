@@ -22,7 +22,7 @@
 #include "../ui/ui.h"
 #include "../led/led.h"
 #include "../server/web_server.h"
-
+#include "../api/remote_api.h"  
 #include <WiFi.h>
 #include <esp_wifi.h>
 
@@ -55,6 +55,8 @@ void onlineStart() {
 
     _onlineActive = true;
 
+    // ── Remote API Module ──
+    remoteApiSetup(); 
     // 6. Cập nhật UI
     currentScreen = SCREEN_MAIN;
     drawUI();
@@ -70,6 +72,9 @@ void onlineStop() {
 
     // Đặt state machine WiFi về IDLE — ngừng mọi reconnect
     wifiState = WiFiState::IDLE;
+
+    // ── Dừng Remote API ──
+    remoteApiStop();
 
     _onlineActive = false;
     // offlineStart() sẽ gọi mqttForceStop() và timeManagerSuspend()
@@ -88,6 +93,9 @@ void onlineLoop() {
     // MQTT loop — kết nối lại nếu mất, gửi/nhận
     mqttLoop();
 
+    // Remote API polling (non-blocking, mỗi 3 giây)
+    remoteApiLoop();
+    
     // Touch
     handleTouch();
 
